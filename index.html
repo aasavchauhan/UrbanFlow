@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="UrbanFlow — AI-Based Smart Traffic Simulation System. Design city road networks and simulate intelligent traffic management.">
+    <title>UrbanFlow — Smart Traffic Simulation</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚦</text></svg>">
+</head>
+<body>
+    <div id="app">
+        <!-- ═══ Header ═══ -->
+        <header id="header">
+            <div class="header-left">
+                <div class="logo">
+                    <div class="logo-icon">🚦</div>
+                    <span>UrbanFlow</span>
+                </div>
+                <span class="status-badge stopped" id="sim-status">
+                    <span class="status-dot"></span>
+                    <span id="sim-status-text">Ready</span>
+                </span>
+            </div>
+
+            <div class="header-center">
+                <div class="mode-toggle">
+                    <button class="mode-btn active" id="btn-mode-editor" data-mode="EDITOR">✏️ Editor</button>
+                    <button class="mode-btn" id="btn-mode-sim" data-mode="SIMULATION">▶️ Simulate</button>
+                </div>
+            </div>
+
+            <div class="header-right">
+                <div class="sim-controls" id="sim-controls" style="display:none;">
+                    <button class="btn btn-sm" id="btn-sim-reset" title="Reset">⏹</button>
+                    <button class="btn btn-sm btn-primary" id="btn-sim-play" title="Play/Pause">▶</button>
+                    <button class="btn btn-sm" id="btn-sim-step" title="Step">⏭</button>
+                    <div class="tool-separator"></div>
+                    <button class="btn btn-sm" id="btn-speed-down" title="Slower">−</button>
+                    <span class="speed-display" id="speed-display">1×</span>
+                    <button class="btn btn-sm" id="btn-speed-up" title="Faster">+</button>
+                </div>
+                <button class="btn btn-sm" id="btn-help" title="Keyboard shortcuts">⌨️</button>
+            </div>
+        </header>
+
+        <!-- ═══ Canvas Area ═══ -->
+        <main id="canvas-area">
+            <canvas id="main-canvas"></canvas>
+
+            <!-- Canvas Overlay Controls -->
+            <div id="view-controls" style="position: absolute; bottom: 20px; left: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 100; pointer-events: auto;">
+                <button class="tool-btn" id="btn-zoom-in" title="Zoom In (+)" style="width:40px; height:40px; font-size:16px;"><span>➕</span></button>
+                <button class="tool-btn" id="btn-zoom-out" title="Zoom Out (-)" style="width:40px; height:40px; font-size:16px;"><span>➖</span></button>
+                <button class="tool-btn" id="btn-zoom-reset" title="Reset View (0)" style="width:40px; height:40px; font-size:16px;"><span>⌂</span></button>
+            </div>
+
+            <!-- Editor Toolbar -->
+            <div id="toolbar">
+                <button class="tool-btn active" data-tool="SELECT" id="tool-select">
+                    <span>🔍</span>
+                    <span class="tooltip">Select (V)</span>
+                </button>
+                <button class="tool-btn" data-tool="JUNCTION" id="tool-junction">
+                    <span>⊕</span>
+                    <span class="tooltip">Add Junction (J)</span>
+                </button>
+                <button class="tool-btn" data-tool="ROAD" id="tool-road">
+                    <span>━</span>
+                    <span class="tooltip">Draw Road (R)</span>
+                </button>
+                <button class="tool-btn" data-tool="ROUNDABOUT" id="tool-roundabout">
+                    <span>🔄</span>
+                    <span class="tooltip">Roundabout (O)</span>
+                </button>
+                <button class="tool-btn" data-tool="SIGNAL" id="tool-signal">
+                    <span>🚦</span>
+                    <span class="tooltip">Add Signal (S)</span>
+                </button>
+                <div class="tool-separator"></div>
+                <button class="tool-btn" data-tool="DELETE" id="tool-delete">
+                    <span>🗑️</span>
+                    <span class="tooltip">Delete (X)</span>
+                </button>
+                <div class="tool-separator"></div>
+                <button class="tool-btn" id="btn-undo">
+                    <span>↩</span>
+                    <span class="tooltip">Undo (Ctrl+Z)</span>
+                </button>
+                <button class="tool-btn" id="btn-redo">
+                    <span>↪</span>
+                    <span class="tooltip">Redo (Ctrl+Y)</span>
+                </button>
+            </div>
+        </main>
+
+        <!-- ═══ Sidebar ═══ -->
+        <aside id="sidebar">
+            <!-- Tabs -->
+            <div class="sidebar-tabs">
+                <button class="sidebar-tab active" data-tab="controls">Controls</button>
+                <button class="sidebar-tab" data-tab="dashboard">Dashboard</button>
+                <button class="sidebar-tab" data-tab="compare">Compare</button>
+            </div>
+
+            <!-- ─── Controls Panel ─── -->
+            <div class="sidebar-panel active" id="panel-controls">
+                <!-- Preset Layouts -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>City Presets</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="preset-grid">
+                            <button class="preset-btn" id="preset-grid" data-preset="grid">
+                                <div class="preset-icon">🏙️</div>
+                                <div class="preset-info">
+                                    <div class="preset-name">Grid City</div>
+                                    <div class="preset-desc">4×4 intersection grid — 16 junctions</div>
+                                </div>
+                            </button>
+                            <button class="preset-btn" id="preset-ring" data-preset="ring">
+                                <div class="preset-icon">🔄</div>
+                                <div class="preset-info">
+                                    <div class="preset-name">Ring City</div>
+                                    <div class="preset-desc">Central ring + radial roads — 13 junctions</div>
+                                </div>
+                            </button>
+                            <button class="preset-btn" id="preset-highway" data-preset="highway">
+                                <div class="preset-icon">🛣️</div>
+                                <div class="preset-info">
+                                    <div class="preset-name">Highway + Town</div>
+                                    <div class="preset-desc">Main highway with side streets — 18 junctions</div>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Session Management -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Session</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="btn-group">
+                            <button class="btn btn-sm btn-primary" id="btn-save-session">Save</button>
+                            <button class="btn btn-sm" id="btn-load-session">Load</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Simulation Settings -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Simulation Settings</span>
+                    </div>
+                    <div class="panel-section-body" style="display:flex; flex-direction:column; gap:12px;">
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>Signal Green Time</span>
+                                <span class="slider-value" id="val-green-time">20s</span>
+                            </div>
+                            <input type="range" id="slider-green-time" min="10" max="120" value="20">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>Signal Yellow Time</span>
+                                <span class="slider-value" id="val-yellow-time">3s</span>
+                            </div>
+                            <input type="range" id="slider-yellow-time" min="2" max="10" value="3">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>Traffic Density</span>
+                                <span class="slider-value" id="val-density">50%</span>
+                            </div>
+                            <input type="range" id="slider-density" min="0" max="100" value="50">
+                        </div>
+                        <div class="slider-group">
+                            <div class="slider-label">
+                                <span>Spawn Rate</span>
+                                <span class="slider-value" id="val-spawn-rate">3/s</span>
+                            </div>
+                            <input type="range" id="slider-spawn-rate" min="1" max="10" value="3">
+                        </div>
+                        <div class="toggle-row">
+                            <span class="toggle-label">AI Control</span>
+                            <div class="toggle-switch" id="toggle-ai" data-active="false"></div>
+                        </div>
+                        <div class="toggle-row">
+                            <span class="toggle-label">Show Heatmap</span>
+                            <div class="toggle-switch" id="toggle-heatmap" data-active="false"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scenario Events -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Scenario Events</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="event-grid">
+                            <button class="event-btn" id="btn-event-ambulance" data-event="ambulance">
+                                <span class="event-icon">🚑</span>
+                                <span>Ambulance</span>
+                            </button>
+                            <button class="event-btn" id="btn-event-firetruck" data-event="firetruck">
+                                <span class="event-icon">🚒</span>
+                                <span>Fire Truck</span>
+                            </button>
+                            <button class="event-btn" id="btn-event-blockage" data-event="blockage">
+                                <span class="event-icon">🚧</span>
+                                <span>Blockage</span>
+                            </button>
+                            <button class="event-btn" id="btn-event-rain" data-event="rain">
+                                <span class="event-icon">🌧️</span>
+                                <span>Rain</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vehicle Spawning -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Quick Spawn</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="btn-group" style="flex-wrap:wrap;">
+                            <button class="btn btn-sm" id="btn-spawn-10">+10 Cars</button>
+                            <button class="btn btn-sm" id="btn-spawn-50">+50 Cars</button>
+                            <button class="btn btn-sm" id="btn-spawn-bus">+Bus</button>
+                            <button class="btn btn-sm btn-danger" id="btn-clear-vehicles">Clear All</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ─── Dashboard Panel ─── -->
+            <div class="sidebar-panel" id="panel-dashboard">
+                <!-- Live Metrics -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Live Metrics</span>
+                        <span class="status-badge running" id="metrics-status" style="display:none;">
+                            <span class="status-dot"></span>Live
+                        </span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="metric-grid">
+                            <div class="metric-card">
+                                <div class="metric-value" id="metric-wait-time">0.0s</div>
+                                <div class="metric-label">Avg Wait</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" id="metric-throughput">0</div>
+                                <div class="metric-label">Throughput/min</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" id="metric-vehicles">0</div>
+                                <div class="metric-label">Active Vehicles</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" id="metric-congestion">0%</div>
+                                <div class="metric-label">Congestion</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wait Time Chart -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Wait Time Over Time</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="chart-container">
+                            <canvas id="chart-wait-time"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Throughput Chart -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Throughput</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="chart-container">
+                            <canvas id="chart-throughput"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ─── Compare Panel ─── -->
+            <div class="sidebar-panel" id="panel-compare">
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Fixed vs AI — Benchmark</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <p style="font-size:var(--font-size-xs); color:var(--color-text-tertiary); margin-bottom:12px;">
+                            Run the simulation with both control modes to compare performance.
+                        </p>
+                        <div class="btn-group" style="margin-bottom:12px;">
+                            <button class="btn btn-sm btn-primary" id="btn-run-fixed">Run Fixed</button>
+                            <button class="btn btn-sm btn-success" id="btn-run-ai">Run AI</button>
+                        </div>
+                        <table class="comparison-table">
+                            <thead>
+                                <tr>
+                                    <th>Metric</th>
+                                    <th>Fixed</th>
+                                    <th>AI</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Avg Wait Time</td>
+                                    <td id="cmp-fixed-wait">—</td>
+                                    <td id="cmp-ai-wait">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Throughput</td>
+                                    <td id="cmp-fixed-throughput">—</td>
+                                    <td id="cmp-ai-throughput">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Congestion</td>
+                                    <td id="cmp-fixed-congestion">—</td>
+                                    <td id="cmp-ai-congestion">—</td>
+                                </tr>
+                                <tr>
+                                    <td>Emergency Delay</td>
+                                    <td id="cmp-fixed-emergency">—</td>
+                                    <td id="cmp-ai-emergency">—</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Comparison Chart -->
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Performance Comparison</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="chart-container" style="height:160px;">
+                            <canvas id="chart-comparison"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Floating Signal Settings Panel -->
+        <div id="signal-config-panel" class="floating-panel" style="display: none; position: absolute; right: 350px; top: 20px; width: 250px; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; padding: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 100;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--color-border); padding-bottom: 8px;">
+                <h3 style="margin: 0; font-size: 14px; font-weight: 600;">Edit Signal Timing</h3>
+                <button id="btn-close-signal-config" style="background: none; border: none; color: var(--color-text-secondary); cursor: pointer; font-size: 16px;">&times;</button>
+            </div>
+            
+            <input type="hidden" id="config-junction-id" value="">
+            
+            <div class="slider-group" style="margin-bottom: 12px;">
+                <div class="slider-label" style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 12px;">
+                    <span>Green Time (s):</span>
+                    <span id="val-indiv-green">60</span>
+                </div>
+                <input type="range" id="slider-indiv-green" min="10" max="120" value="60" style="width: 100%;">
+            </div>
+            
+            <div class="slider-group" style="margin-bottom: 15px;">
+                <div class="slider-label" style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 12px;">
+                    <span>Yellow Time (s):</span>
+                    <span id="val-indiv-yellow">3</span>
+                </div>
+                <input type="range" id="slider-indiv-yellow" min="2" max="10" value="3" style="width: 100%;">
+            </div>
+
+            <div style="display: flex; gap: 8px;">
+                <button class="btn btn-sm btn-primary" id="btn-apply-signal-config" style="flex: 1;">Apply</button>
+                <button class="btn btn-sm" id="btn-remove-signal" style="flex: 1; background: #e74c3c; color: white;">Remove</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
