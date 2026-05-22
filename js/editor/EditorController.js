@@ -41,11 +41,16 @@ export class EditorController {
         // Pan state
         this._isPanning = false;
         this._lastMouse = { x: 0, y: 0 };
+        this._pointerDown = null;
+        this._spacePanActive = false;
+        this._lastPointerWasDrag = false;
+        this._dragThreshold = 4;
 
         // Hover state
         this.hoveredJunction = null;
         this.hoveredRoad = null;
         this.draggedJunction = null;
+        this._dragCandidateJunction = null;
 
         // Undo/Redo
         this._undoStack = [];
@@ -53,6 +58,7 @@ export class EditorController {
         this._maxHistory = 50;
 
         this._bindEvents();
+        this._updateCursor();
     }
 
     // ─── Tool Selection ────────────────────────────────────────────
@@ -64,27 +70,27 @@ export class EditorController {
         this.draggedJunction = null;
         this.eventBus.emit(Events.TOOL_CHANGED, { tool });
 
-        // Update cursor
-        switch (tool) {
-            case Tools.SELECT: this.canvas.style.cursor = 'default'; break;
-            case Tools.JUNCTION: this.canvas.style.cursor = 'crosshair'; break;
-            case Tools.ROAD: this.canvas.style.cursor = 'crosshair'; break;
-            case Tools.ROUNDABOUT: this.canvas.style.cursor = 'crosshair'; break;
-            case Tools.SIGNAL: this.canvas.style.cursor = 'pointer'; break;
-            case Tools.HOSPITAL: this.canvas.style.cursor = 'crosshair'; break;
-            case Tools.FIRE_STATION: this.canvas.style.cursor = 'crosshair'; break;
-            case Tools.DELETE: this.canvas.style.cursor = 'crosshair'; break;
-        }
+        this._updateCursor();
     }
 
     // ─── Event Binding ─────────────────────────────────────────────
 
     _bindEvents() {
         this.canvas.addEventListener('mousedown', (e) => this._onMouseDown(e));
-        this.canvas.addEventListener('mousemove', (e) => this._onMouseMove(e));
-        this.canvas.addEventListener('mouseup', (e) => this._onMouseUp(e));
-        this.canvas.addEventListener('wheel', (e) => this._onWheel(e));
+        window.addEventListener('mousemove', (e) => this._onMouseMove(e));
+        window.addEventListener('mouseup', (e) => this._onMouseUp(e));
+        this.canvas.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
         this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        window.addEventListener('keydown', (e) => {
+            if (!this.enabled || e.code !== 'Space' || this._isTypingTarget(e.target)) return;
+            this._spacePanActive = true;
+            if (!this._isPanning) this.canvas.style.cursor = 'grab';
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code !== 'Space') return;
+            this._spacePanActive = false;
+            this._updateCursor();
+        });
 
         // Touch support for mobile
         this.canvas.addEventListener('touchstart', (e) => {
@@ -104,66 +110,60 @@ export class EditorController {
     }
 
     _onMouseDown(e) {
-        if (!this.enabled) return;
+        if (!this._isCanvasEvent(e)) return;
 
         const worldPos = this.renderer.screenToWorld(e.clientX, e.clientY);
+        const shouldPan = this._shouldStartPan(e);
 
-        // Right-click or middle-click = pan
-        if (e.button === 1 || e.button === 2) {
+        this._pointerDown = {
+            button: e.button,
+            startX: e.clientX,
+            startY: e.clientY,
+            lastX: e.clientX,
+            lastY: e.clientY,
+            worldPos,
+            action: shouldPan ? 'pan' : 'tool',
+            moved: false,
+        };
+        this._lastPointerWasDrag = false;
+
+        if (shouldPan) {
+            e.preventDefault();
             this._isPanning = true;
             this._lastMouse = { x: e.clientX, y: e.clientY };
             this.canvas.style.cursor = 'grabbing';
             return;
         }
 
-        // Left-click actions based on tool
-        switch (this.activeTool) {
-            case Tools.SELECT:
-                if (this.hoveredJunction) {
-                    this._saveUndo();
-                    this.draggedJunction = this.hoveredJunction;
-                    this.canvas.style.cursor = 'grabbing';
-                } else {
-                    this._isPanning = true;
-                    this._lastMouse = { x: e.clientX, y: e.clientY };
-                    this.canvas.style.cursor = 'grabbing';
-                }
-                break;
+        if (!this.enabled) return;
 
-            case Tools.JUNCTION:
-                this._placeJunction(worldPos);
-                break;
-
-            case Tools.ROAD:
-                this._handleRoadClick(worldPos);
-                break;
-
-            case Tools.ROUNDABOUT:
-                this._placeRoundabout(worldPos);
-                break;
-
-            case Tools.SIGNAL:
-                this._toggleSignal(worldPos);
-                break;
-
-            case Tools.HOSPITAL:
-                this._placeFacility(worldPos, FacilityType.HOSPITAL);
-                break;
-
-            case Tools.FIRE_STATION:
-                this._placeFacility(worldPos, FacilityType.FIRE_STATION);
-                break;
-
-            case Tools.DELETE:
-                this._deleteAt(worldPos);
-                break;
+        if (this.activeTool === Tools.SELECT) {
+            if (this.hoveredJunction) {
+                this._dragCandidateJunction = this.hoveredJunction;
+                this.canvas.style.cursor = 'grab';
+            } else {
+                this._isPanning = true;
+                this._pointerDown.action = 'pan';
+                this._lastMouse = { x: e.clientX, y: e.clientY };
+                this.canvas.style.cursor = 'grabbing';
+            }
         }
     }
 
     _onMouseMove(e) {
-        if (!this.enabled) return;
+        if (!this.enabled && !this._pointerDown) return;
+        if (!this._pointerDown && !this._isCanvasEvent(e)) return;
 
         const worldPos = this.renderer.screenToWorld(e.clientX, e.clientY);
+        const pointer = this._pointerDown;
+
+        if (pointer) {
+            const movedDistance = Math.hypot(e.clientX - pointer.startX, e.clientY - pointer.startY);
+            if (movedDistance >= this._dragThreshold) {
+                pointer.moved = true;
+                this._lastPointerWasDrag = true;
+            }
+        }
 
         // Handle panning
         if (this._isPanning) {
@@ -172,6 +172,15 @@ export class EditorController {
             this.renderer.pan(dx, dy);
             this._lastMouse = { x: e.clientX, y: e.clientY };
             return;
+        }
+
+        if (!this.enabled) return;
+
+        if (this._dragCandidateJunction && pointer?.moved && !this.draggedJunction) {
+            this._saveUndo();
+            this.draggedJunction = this._dragCandidateJunction;
+            this._dragCandidateJunction = null;
+            this.canvas.style.cursor = 'grabbing';
         }
 
         // Handle Dragging Junction
@@ -189,11 +198,7 @@ export class EditorController {
         this.hoveredRoad = this.hoveredJunction ? null : this._findRoadNear(worldPos.x, worldPos.y, 15);
 
         // Update cursor based on hover
-        if (this.activeTool === Tools.SELECT && !this._isPanning) {
-            this.canvas.style.cursor = this.hoveredJunction ? 'grab' : 'default';
-        } else if (this.activeTool === Tools.SIGNAL && !this._isPanning) {
-            this.canvas.style.cursor = this._findSignalTarget(worldPos) ? 'pointer' : 'not-allowed';
-        }
+        this._updateCursor(worldPos);
 
         // Ghost preview for placement tools
         if (this.activeTool === Tools.JUNCTION) {
@@ -226,21 +231,126 @@ export class EditorController {
     }
 
     _onMouseUp(e) {
+        const pointer = this._pointerDown;
+        const shouldRunClickAction = pointer &&
+            pointer.action === 'tool' &&
+            !pointer.moved &&
+            this.enabled &&
+            e.button === pointer.button;
+
         if (this._isPanning) {
             this._isPanning = false;
-            this.setTool(this.activeTool); // Restore cursor
         }
         if (this.draggedJunction) {
             this.eventBus.emit(Events.CITY_CHANGED, { reason: 'junction:moved' });
             this.draggedJunction = null;
-            this.setTool(this.activeTool); // Restore cursor
+        }
+
+        if (shouldRunClickAction) {
+            this._runToolAction(pointer.worldPos);
+        }
+
+        this._pointerDown = null;
+        this._dragCandidateJunction = null;
+        this._updateCursor();
+    }
+
+    _runToolAction(worldPos) {
+        switch (this.activeTool) {
+            case Tools.SELECT:
+                break;
+
+            case Tools.JUNCTION:
+                this._placeJunction(worldPos);
+                break;
+
+            case Tools.ROAD:
+                this._handleRoadClick(worldPos);
+                break;
+
+            case Tools.ROUNDABOUT:
+                this._placeRoundabout(worldPos);
+                break;
+
+            case Tools.SIGNAL:
+                this._toggleSignal(worldPos);
+                break;
+
+            case Tools.HOSPITAL:
+                this._placeFacility(worldPos, FacilityType.HOSPITAL);
+                break;
+
+            case Tools.FIRE_STATION:
+                this._placeFacility(worldPos, FacilityType.FIRE_STATION);
+                break;
+
+            case Tools.DELETE:
+                this._deleteAt(worldPos);
+                break;
         }
     }
 
     _onWheel(e) {
         e.preventDefault();
-        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        const factor = Math.exp(-e.deltaY * 0.0015);
         this.renderer.zoom(factor, e.clientX, e.clientY);
+    }
+
+    _shouldStartPan(e) {
+        if (!this.enabled) return e.button === 0 || e.button === 1 || e.button === 2;
+        return e.button === 1 || e.button === 2 || e.altKey || this._spacePanActive;
+    }
+
+    _isCanvasEvent(e) {
+        return !e.target || e.target === this.canvas;
+    }
+
+    _isTypingTarget(target) {
+        if (!target) return false;
+        const tag = target.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+    }
+
+    _updateCursor(worldPos = null) {
+        if (this._isPanning) {
+            this.canvas.style.cursor = 'grabbing';
+            return;
+        }
+
+        if (this._spacePanActive) {
+            this.canvas.style.cursor = 'grab';
+            return;
+        }
+
+        if (!this.enabled) {
+            this.canvas.style.cursor = 'grab';
+            return;
+        }
+
+        switch (this.activeTool) {
+            case Tools.SELECT:
+                this.canvas.style.cursor = this.hoveredJunction ? 'grab' : 'grab';
+                break;
+            case Tools.SIGNAL:
+                this.canvas.style.cursor = !worldPos || this._findSignalTarget(worldPos) ? 'pointer' : 'not-allowed';
+                break;
+            case Tools.JUNCTION:
+            case Tools.ROAD:
+            case Tools.ROUNDABOUT:
+            case Tools.HOSPITAL:
+            case Tools.FIRE_STATION:
+                this.canvas.style.cursor = 'crosshair';
+                break;
+            case Tools.DELETE:
+                this.canvas.style.cursor = 'cell';
+                break;
+            default:
+                this.canvas.style.cursor = 'grab';
+        }
+    }
+
+    wasLastPointerDrag() {
+        return this._lastPointerWasDrag;
     }
 
     // ─── Tool Actions ──────────────────────────────────────────────
@@ -491,11 +601,17 @@ export class EditorController {
 
     enable() {
         this.enabled = true;
+        this._updateCursor();
     }
 
     disable() {
         this.enabled = false;
         this._roadStartJunction = null;
         this.renderer.ghostPreview = null;
+        this.draggedJunction = null;
+        this._dragCandidateJunction = null;
+        this.hoveredJunction = null;
+        this.hoveredRoad = null;
+        this._updateCursor();
     }
 }
