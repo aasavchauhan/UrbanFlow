@@ -92,17 +92,20 @@ export class Renderer {
 
     zoom(factor, centerX, centerY) {
         const oldZoom = this.camera.zoom;
+        const worldBefore = (centerX !== undefined && centerY !== undefined)
+            ? this.screenToWorld(centerX, centerY)
+            : null;
+
         this.camera.zoom = Math.max(
             this.camera.minZoom,
             Math.min(this.camera.maxZoom, this.camera.zoom * factor)
         );
 
         // Zoom toward cursor position
-        if (centerX !== undefined && centerY !== undefined) {
-            const worldBefore = this.screenToWorld(centerX, centerY);
-            const zoomRatio = this.camera.zoom / oldZoom;
-            this.camera.x += (worldBefore.x - this.camera.x) * (1 - 1 / zoomRatio);
-            this.camera.y += (worldBefore.y - this.camera.y) * (1 - 1 / zoomRatio);
+        if (worldBefore && this.camera.zoom !== oldZoom) {
+            const rect = this.canvas.getBoundingClientRect();
+            this.camera.x = worldBefore.x - (centerX - rect.left - rect.width / 2) / this.camera.zoom;
+            this.camera.y = worldBefore.y - (centerY - rect.top - rect.height / 2) / this.camera.zoom;
         }
     }
 

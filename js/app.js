@@ -340,11 +340,13 @@ document.getElementById('btn-redo')?.addEventListener('click', () => editor.redo
 
 // ─── Canvas View Controls ──────────────────────────────────
 document.getElementById('btn-zoom-in')?.addEventListener('click', () => {
-    renderer.zoom(1.2, canvas.width / 2, canvas.height / 2);
+    const rect = canvas.getBoundingClientRect();
+    renderer.zoom(1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
 });
 
 document.getElementById('btn-zoom-out')?.addEventListener('click', () => {
-    renderer.zoom(0.8, canvas.width / 2, canvas.height / 2);
+    const rect = canvas.getBoundingClientRect();
+    renderer.zoom(0.8, rect.left + rect.width / 2, rect.top + rect.height / 2);
 });
 
 document.getElementById('btn-zoom-reset')?.addEventListener('click', () => {
@@ -523,9 +525,9 @@ document.getElementById('btn-clear-vehicles')?.addEventListener('click', () => {
     vehicleManager.clearAll();
 });
 
-canvas.addEventListener('mousedown', (e) => {
+canvas.addEventListener('click', (e) => {
     if (state.mode !== 'SIMULATION' || !spawnState.enabled) return;
-    if (e.button !== 0) return;
+    if (e.button !== 0 || editor.wasLastPointerDrag()) return;
 
     const worldPos = renderer.screenToWorld(e.clientX, e.clientY);
     const junction = cityGraph.findJunctionNear(worldPos.x, worldPos.y, 30);
@@ -835,8 +837,9 @@ document.getElementById('btn-help')?.addEventListener('click', () => {
         `  Space — Play / Pause\n` +
         `  1-4 — Speed (1×, 2×, 5×, 10×)\n\n` +
         `NAVIGATION:\n` +
-        `  Drag — Pan canvas\n` +
-        `  Scroll — Zoom in/out\n` +
+        `  Drag empty canvas — Pan map\n` +
+        `  Middle/right drag or Alt+drag — Pan from any tool\n` +
+        `  Scroll at cursor — Zoom in/out\n` +
         `  Escape — Deselect tool`
     );
 });
