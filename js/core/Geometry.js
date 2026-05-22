@@ -106,3 +106,66 @@ export class LineSegment {
         return this.dir.normalize();
     }
 }
+
+/**
+ * Polyline curve with linear segments and arc-length parameterization.
+ */
+export class PolylineCurve {
+    /**
+     * @param {Vector2[]} points
+     */
+    constructor(points) {
+        this.points = points || [];
+        this._segments = [];
+        this._lengths = [];
+        this.length = 0;
+        this._build();
+    }
+
+    _build() {
+        this._segments = [];
+        this._lengths = [0];
+        this.length = 0;
+        if (this.points.length < 2) return;
+
+        for (let i = 0; i < this.points.length - 1; i++) {
+            const seg = new LineSegment(this.points[i], this.points[i + 1]);
+            this._segments.push(seg);
+            this.length += seg.length;
+            this._lengths.push(this.length);
+        }
+    }
+
+    getPoint(t) {
+        if (this._segments.length === 0) {
+            return this.points[0] || new Vector2(0, 0);
+        }
+        const target = Math.max(0, Math.min(1, t)) * this.length;
+        for (let i = 0; i < this._segments.length; i++) {
+            const segStart = this._lengths[i];
+            const segEnd = this._lengths[i + 1];
+            if (target <= segEnd || i === this._segments.length - 1) {
+                const seg = this._segments[i];
+                const segLen = seg.length || 1;
+                const localT = (target - segStart) / segLen;
+                return seg.getPoint(localT);
+            }
+        }
+        return this.points[this.points.length - 1];
+    }
+
+    getTangent(t) {
+        if (this._segments.length === 0) {
+            return new Vector2(1, 0);
+        }
+        const target = Math.max(0, Math.min(1, t)) * this.length;
+        for (let i = 0; i < this._segments.length; i++) {
+            const segStart = this._lengths[i];
+            const segEnd = this._lengths[i + 1];
+            if (target <= segEnd || i === this._segments.length - 1) {
+                return this._segments[i].getTangent(0);
+            }
+        }
+        return this._segments[this._segments.length - 1].getTangent(0);
+    }
+}
