@@ -117,10 +117,13 @@ export class Vehicle {
             const endJunctionId = currentObj.endNode;
             const signal = signalStates[endJunctionId];
             if (signal && this.priority === 0) {
-                // Look up per-lane phase (red/green/yellow)
-                signalPhase = (signal.phases && signal.phases[currentObj.id])
-                    ? signal.phases[currentObj.id]
-                    : (signal.state || 'green');
+                // Look up per-lane phase (red/green/yellow). If the lane is not
+                // explicitly in phases, treat it as red for safety.
+                if (signal.phases) {
+                    signalPhase = signal.phases[currentObj.id] || 'red';
+                } else {
+                    signalPhase = signal.state || 'green';
+                }
             }
         }
 
@@ -182,59 +185,71 @@ export class Vehicle {
                         stoppingForSignal = true;
                     }
                 } else {
-                    // Green or uncontrolled — check intersection path reservation
+                    // Green or uncontrolled — check intersection path reservation only when no signal controls the junction
+                    const endJunctionId = currentObj.endNode;
+                    const hasSignal = !!signalStates[endJunctionId];
                     const nextConnId = this._peekNextConnection(currentObj);
                     if (nextConnId) {
                         const targetConn = this.cityGraph.connections.get(nextConnId);
+                        const targetLane = targetConn ? this.cityGraph.lanes.get(targetConn.toLane) : null;
+
+                        if (targetLane) {
+                            // Box-block rule: only enter if exit lane has space
+                            const blockBuffer = this.size * 2 + QUEUE_GAP;
+                            const blocked = targetLane.vehicles.some(v => {
+                                if (v.id === this.id) return false;
+                                return v.progress * targetLane.geom.length < blockBuffer;
+                            });
+                            if (blocked) {
+                                shouldStop = true;
+                                yieldingToTraffic = true;
+                            }
+                        }
+                    }
+
+                    if (!hasSignal && nextConnId) {
+                        const targetConn = this.cityGraph.connections.get(nextConnId);
                         if (targetConn && targetConn.conflictingCurves) {
-                            for (const conflictId of targetConn.conflictingCurves) {
-                                const conflictConn = this.cityGraph.connections.get(conflictId);
-                                if (!conflictConn) continue;
-                                
-                                if (conflictConn.vehicles.length > 0) {
-                                    for (const otherV of conflictConn.vehicles) {
-                                        if (otherV.priority > this.priority) {
-                                            shouldStop = true; yieldingToTraffic = true; break;
-                                        } else if (otherV.priority === this.priority) {
-                                            if (targetConn.turnType === 'right' && conflictConn.turnType !== 'right') { // Less sharp curve for LHD
-                                                shouldStop = true; yieldingToTraffic = true; break;
-                                            } else if (otherV.progress > 0.1) {
-                                                shouldStop = true; yieldingToTraffic = true; break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                const fromLane = this.cityGraph.lanes.get(conflictConn.fromLane);
-                                if (fromLane && fromLane.vehicles.length > 0 && !shouldStop) {
-                                    // Don't yield to vehicles that are facing a red light
-                                    let otherSignalPhase = 'green';
-                                    const otherSignal = signalStates[fromLane.endNode];
-                                    if (otherSignal && otherSignal.phases) {
-                                        otherSignalPhase = otherSignal.phases[fromLane.id] || otherSignal.state || 'green';
-                                    }
-                                    if (otherSignalPhase === 'red') continue;
-
-                                    for (const otherV of fromLane.vehicles) {
-                                        const otherDistRemaining = fromLane.geom.length * (1 - otherV.progress) - otherV.size;
-                                        const otherBrakeDist = (otherV.speed * otherV.speed) / (2 * otherV.decel);
-                                        const otherCheckDist = Math.max(60, otherBrakeDist);
-                                        
-                                        if (otherDistRemaining < otherCheckDist && otherDistRemaining > 0) {
+                                for (const conflictId of targetConn.conflictingCurves) {
+                                    const conflictConn = this.cityGraph.connections.get(conflictId);
+                                    if (!conflictConn) continue;
+                                    
+                                    if (conflictConn.vehicles.length > 0) {
+                                        for (const otherV of conflictConn.vehicles) {
                                             if (otherV.priority > this.priority) {
                                                 shouldStop = true; yieldingToTraffic = true; break;
                                             } else if (otherV.priority === this.priority) {
-                                                if (targetConn.turnType === 'right' && conflictConn.turnType !== 'right') {
+                                                if (targetConn.turnType === 'right' && conflictConn.turnType !== 'right') { // Less sharp curve for LHD
                                                     shouldStop = true; yieldingToTraffic = true; break;
-                                                } else if (targetConn.turnType === conflictConn.turnType && stopLineDist > otherDistRemaining) {
+                                                } else if (otherV.progress > 0.1) {
                                                     shouldStop = true; yieldingToTraffic = true; break;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    const fromLane = this.cityGraph.lanes.get(conflictConn.fromLane);
+                                    if (fromLane && fromLane.vehicles.length > 0 && !shouldStop) {
+                                        for (const otherV of fromLane.vehicles) {
+                                            const otherDistRemaining = fromLane.geom.length * (1 - otherV.progress) - otherV.size;
+                                            const otherBrakeDist = (otherV.speed * otherV.speed) / (2 * otherV.decel);
+                                            const otherCheckDist = Math.max(60, otherBrakeDist);
+                                            
+                                            if (otherDistRemaining < otherCheckDist && otherDistRemaining > 0) {
+                                                if (otherV.priority > this.priority) {
+                                                    shouldStop = true; yieldingToTraffic = true; break;
+                                                } else if (otherV.priority === this.priority) {
+                                                    if (targetConn.turnType === 'right' && conflictConn.turnType !== 'right') {
+                                                        shouldStop = true; yieldingToTraffic = true; break;
+                                                    } else if (targetConn.turnType === conflictConn.turnType && stopLineDist > otherDistRemaining) {
+                                                        shouldStop = true; yieldingToTraffic = true; break;
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
                     }
                 }
                 
@@ -418,6 +433,7 @@ export class Vehicle {
             id: this.id, x: this.x, y: this.y, angle: this.angle,
             type: this.type, color: this.color, visible: this.visible, state: this.state,
             speed: this.speed, progress: this.progress, geomType: this.geomType,
+            currentGeomId: this.currentGeomId,
         };
     }
 }

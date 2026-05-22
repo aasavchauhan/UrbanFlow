@@ -102,16 +102,43 @@ export class VehicleManager {
      * Spawn N random vehicles.
      */
     spawnRandom(count, type = VehicleType.CAR) {
-        const entryPoints = this.cityGraph.getEntryExitPoints();
+        let entryPoints = this.cityGraph.getEntryExitPoints();
+        if (entryPoints.length < 2) {
+            entryPoints = Array.from(this.cityGraph.junctions.values());
+        }
         if (entryPoints.length < 2) return;
+
+        const centroid = entryPoints.reduce(
+            (acc, j) => ({ x: acc.x + j.x, y: acc.y + j.y }),
+            { x: 0, y: 0 }
+        );
+        centroid.x /= entryPoints.length;
+        centroid.y /= entryPoints.length;
+
+        const weights = entryPoints.map(j => {
+            const dx = j.x - centroid.x;
+            const dy = j.y - centroid.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            return 1 + dist / 200;
+        });
+
+        const pickWeighted = () => {
+            const total = weights.reduce((sum, w) => sum + w, 0);
+            let roll = Math.random() * total;
+            for (let i = 0; i < entryPoints.length; i++) {
+                roll -= weights[i];
+                if (roll <= 0) return entryPoints[i];
+            }
+            return entryPoints[entryPoints.length - 1];
+        };
 
         let spawned = 0;
         let attempts = 0;
 
         while (spawned < count && attempts < count * 3) {
             attempts++;
-            const origin = entryPoints[Math.floor(Math.random() * entryPoints.length)];
-            let dest = entryPoints[Math.floor(Math.random() * entryPoints.length)];
+            const origin = pickWeighted();
+            let dest = pickWeighted();
 
             // Ensure different origin and destination
             if (origin.id === dest.id) continue;
@@ -128,6 +155,19 @@ export class VehicleManager {
         if (type !== VehicleType.AMBULANCE && type !== VehicleType.FIRE_TRUCK) {
             type = VehicleType.AMBULANCE;
         }
+        const facilityType = type === VehicleType.FIRE_TRUCK ? 'fire-station' : 'hospital';
+        const facilities = this.cityGraph.getFacilities?.(facilityType) || [];
+        const entryPoints = this.cityGraph.getEntryExitPoints();
+
+        if (facilities.length > 0 && entryPoints.length > 0) {
+            const origin = entryPoints[Math.floor(Math.random() * entryPoints.length)];
+            const dest = facilities[Math.floor(Math.random() * facilities.length)];
+            if (origin && dest && origin.id !== dest.id) {
+                this.spawnVehicle(type, origin.id, dest.id);
+                return;
+            }
+        }
+
         this.spawnRandom(1, type);
     }
 
@@ -201,6 +241,8 @@ export class VehicleManager {
             this.totalArrived++;
             this.eventBus.emit(Events.VEHICLE_ARRIVED, {
                 vehicleId: vehicle.id,
+                vehicleType: vehicle.type,
+                priority: vehicle.priority,
                 totalTime: vehicle.totalTime,
                 waitTime: vehicle.waitTime,
             });

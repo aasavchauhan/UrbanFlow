@@ -77,6 +77,14 @@
                     <span>🚦</span>
                     <span class="tooltip">Add Signal (S)</span>
                 </button>
+                <button class="tool-btn" data-tool="HOSPITAL" id="tool-hospital">
+                    <span>H</span>
+                    <span class="tooltip">Place Hospital (H)</span>
+                </button>
+                <button class="tool-btn" data-tool="FIRE_STATION" id="tool-fire">
+                    <span>F</span>
+                    <span class="tooltip">Place Fire Station (F)</span>
+                </button>
                 <div class="tool-separator"></div>
                 <button class="tool-btn" data-tool="DELETE" id="tool-delete">
                     <span>🗑️</span>
@@ -250,6 +258,26 @@
                             <button class="btn btn-sm" id="btn-spawn-bus">+Bus</button>
                             <button class="btn btn-sm btn-danger" id="btn-clear-vehicles">Clear All</button>
                         </div>
+                        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
+                            <div class="toggle-row">
+                                <span class="toggle-label">Click to Spawn</span>
+                                <div class="toggle-switch" id="toggle-click-spawn" data-active="false"></div>
+                            </div>
+                            <div class="slider-group" style="margin:0;">
+                                <div class="slider-label">
+                                    <span>Spawn Type</span>
+                                </div>
+                                <select id="select-spawn-type" style="width:100%;">
+                                    <option value="CAR" selected>Car</option>
+                                    <option value="BUS">Bus</option>
+                                    <option value="AMBULANCE">Ambulance</option>
+                                    <option value="FIRE_TRUCK">Fire Truck</option>
+                                </select>
+                                <div style="margin-top:6px; font-size:var(--font-size-xs); color:var(--color-text-tertiary);">
+                                    Click an origin junction, then click a destination junction to spawn.
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -389,9 +417,21 @@
                         <p style="font-size:var(--font-size-xs); color:var(--color-text-tertiary); margin-bottom:12px;">
                             Run the simulation with both control modes to compare performance.
                         </p>
+                        <div class="slider-group" style="margin-bottom:10px;">
+                            <div class="slider-label">
+                                <span>Benchmark Duration</span>
+                                <span class="slider-value" id="val-benchmark-duration">120s</span>
+                            </div>
+                            <input type="range" id="slider-benchmark-duration" min="30" max="600" value="120">
+                        </div>
+                        <div class="toggle-row" style="margin-bottom:12px;">
+                            <span class="toggle-label">Continuous Mode</span>
+                            <div class="toggle-switch" id="toggle-benchmark-continuous" data-active="false"></div>
+                        </div>
                         <div class="btn-group" style="margin-bottom:12px;">
                             <button class="btn btn-sm btn-primary" id="btn-run-fixed">Run Fixed</button>
                             <button class="btn btn-sm btn-success" id="btn-run-ai">Run AI</button>
+                            <button class="btn btn-sm" id="btn-stop-benchmark">Stop</button>
                         </div>
                         <table class="comparison-table">
                             <thead>

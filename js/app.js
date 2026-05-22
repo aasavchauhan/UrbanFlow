@@ -29,6 +29,22 @@ const state = {
     aiEnabled: false,
 };
 
+const spawnState = {
+    enabled: false,
+    vehicleType: VehicleType.CAR,
+    originId: null,
+    destinationId: null,
+};
+
+const benchmarkState = {
+    active: false,
+    mode: null,
+    continuous: false,
+    duration: 120,
+    intervalId: null,
+    lastSnapshotAt: 0,
+};
+
 // ═══════════════════════════════════════════════════════════
 // Initialize Modules
 // ═══════════════════════════════════════════════════════════
@@ -48,6 +64,13 @@ const SESSION_STORAGE_KEY = 'urbanflow_session';
 
 // Set default AI controller based on initial state
 simController.aiController = state.aiEnabled ? aiController : fixedController;
+
+eventBus.on(Events.VEHICLE_ARRIVED, (data) => {
+    if (!data || !data.vehicleType) return;
+    if (data.vehicleType === VehicleType.AMBULANCE || data.vehicleType === VehicleType.FIRE_TRUCK) {
+        metricsCollector.recordEmergencyResponse(data.totalTime || 0);
+    }
+});
 
 // ═══════════════════════════════════════════════════════════
 // Load Default Preset
@@ -239,6 +262,7 @@ function mainLoop(timestamp) {
         vehicles: vehicleManager.getRenderData(),
         signals: simController._getSignalStates(),
         events: simController.activeEvents,
+        spawn: { ...spawnState },
         editor: state.mode === 'EDITOR' ? {
             activeTool: editor.activeTool,
             hoveredJunction: editor.hoveredJunction,
@@ -432,6 +456,24 @@ document.getElementById('slider-spawn-rate')?.addEventListener('input', (e) => {
     document.getElementById('val-spawn-rate').textContent = rate + '/s';
 });
 
+// ─── Click Spawn Controls ─────────────────────────────────
+document.getElementById('toggle-click-spawn')?.addEventListener('click', (e) => {
+    const toggle = e.currentTarget;
+    const isActive = toggle.dataset.active === 'true';
+    toggle.dataset.active = (!isActive).toString();
+    toggle.classList.toggle('active', !isActive);
+    spawnState.enabled = !isActive;
+    spawnState.originId = null;
+    spawnState.destinationId = null;
+});
+
+document.getElementById('select-spawn-type')?.addEventListener('change', (e) => {
+    const type = e.target.value;
+    spawnState.vehicleType = VehicleType[type] || VehicleType.CAR;
+    spawnState.originId = null;
+    spawnState.destinationId = null;
+});
+
 // ─── Toggles ───────────────────────────────────────────────
 document.getElementById('toggle-ai')?.addEventListener('click', (e) => {
     const toggle = e.currentTarget;
@@ -479,6 +521,29 @@ document.getElementById('btn-spawn-bus')?.addEventListener('click', () => {
 
 document.getElementById('btn-clear-vehicles')?.addEventListener('click', () => {
     vehicleManager.clearAll();
+});
+
+canvas.addEventListener('mousedown', (e) => {
+    if (state.mode !== 'SIMULATION' || !spawnState.enabled) return;
+    if (e.button !== 0) return;
+
+    const worldPos = renderer.screenToWorld(e.clientX, e.clientY);
+    const junction = cityGraph.findJunctionNear(worldPos.x, worldPos.y, 30);
+    if (!junction) return;
+
+    if (!spawnState.originId) {
+        spawnState.originId = junction.id;
+        spawnState.destinationId = null;
+        return;
+    }
+
+    if (!spawnState.destinationId) {
+        if (junction.id === spawnState.originId) return;
+        spawnState.destinationId = junction.id;
+        vehicleManager.spawnVehicle(spawnState.vehicleType, spawnState.originId, spawnState.destinationId);
+        spawnState.originId = null;
+        spawnState.destinationId = null;
+    }
 });
 
 // ─── Sidebar Tabs ──────────────────────────────────────────
@@ -593,58 +658,36 @@ document.getElementById('btn-close-signal-config')?.addEventListener('click', ()
 
 // ─── Comparison Benchmark ──────────────────────────────────
 document.getElementById('btn-run-fixed')?.addEventListener('click', async () => {
-    if (state.mode !== 'SIMULATION') {
-        setMode('SIMULATION');
-    }
-
-    // Switch to fixed controller, run for 30 seconds, take snapshot
-    simController.aiController = fixedController;
-    simController.reset();
-    metricsCollector.reset();
-    simController.start();
-    simController.setSpeed(5);
-
-    updateStatusBadge('running', 'Running Fixed...');
-
-    // Run for simulated time
-    await runBenchmark(30);
-
-    const snapshot = metricsCollector.takeSnapshot('fixed');
-    dashboard.setSnapshot('fixed', snapshot);
-    simController.pause();
-    updateStatusBadge('paused', 'Fixed Complete');
-
-    // Restore AI setting
-    simController.aiController = state.aiEnabled ? aiController : fixedController;
+    await startBenchmark('fixed');
 });
 
 document.getElementById('btn-run-ai')?.addEventListener('click', async () => {
-    if (state.mode !== 'SIMULATION') {
-        setMode('SIMULATION');
+    await startBenchmark('ai');
+});
+
+document.getElementById('btn-stop-benchmark')?.addEventListener('click', () => {
+    stopBenchmark();
+});
+
+const benchmarkDurationSlider = document.getElementById('slider-benchmark-duration');
+const benchmarkDurationValue = document.getElementById('val-benchmark-duration');
+if (benchmarkDurationSlider) {
+    benchmarkState.duration = parseInt(benchmarkDurationSlider.value);
+    if (benchmarkDurationValue) {
+        benchmarkDurationValue.textContent = `${benchmarkState.duration}s`;
     }
+    benchmarkDurationSlider.addEventListener('input', (e) => {
+        benchmarkState.duration = parseInt(e.target.value);
+        benchmarkDurationValue.textContent = `${benchmarkState.duration}s`;
+    });
+}
 
-    // Switch to AI controller, run for 30 seconds, take snapshot
-    simController.aiController = aiController;
-    simController.reset();
-    metricsCollector.reset();
-    simController.start();
-    simController.setSpeed(5);
-
-    updateStatusBadge('running', 'Running AI...');
-
-    await runBenchmark(30);
-
-    const snapshot = metricsCollector.takeSnapshot('ai');
-    dashboard.setSnapshot('ai', snapshot);
-    simController.pause();
-    updateStatusBadge('paused', 'AI Complete');
-
-    // Restore speed
-    simController.setSpeed(1);
-    document.getElementById('speed-display').textContent = '1×';
-
-    // Restore AI setting
-    simController.aiController = state.aiEnabled ? aiController : fixedController;
+document.getElementById('toggle-benchmark-continuous')?.addEventListener('click', (e) => {
+    const toggle = e.currentTarget;
+    const isActive = toggle.dataset.active === 'true';
+    toggle.dataset.active = (!isActive).toString();
+    toggle.classList.toggle('active', !isActive);
+    benchmarkState.continuous = !isActive;
 });
 
 /**
@@ -660,6 +703,65 @@ function runBenchmark(simSeconds) {
             }
         }, 100);
     });
+}
+
+async function startBenchmark(mode) {
+    if (state.mode !== 'SIMULATION') {
+        setMode('SIMULATION');
+    }
+
+    stopBenchmark(false);
+
+    benchmarkState.active = true;
+    benchmarkState.mode = mode;
+
+    simController.aiController = mode === 'ai' ? aiController : fixedController;
+    simController.reset();
+    metricsCollector.reset();
+    simController.start();
+    simController.setSpeed(5);
+    document.getElementById('speed-display').textContent = '5×';
+
+    updateStatusBadge('running', mode === 'ai' ? 'Running AI...' : 'Running Fixed...');
+
+    if (benchmarkState.continuous) {
+        benchmarkState.lastSnapshotAt = simController.simTime;
+        benchmarkState.intervalId = setInterval(() => {
+            if (!benchmarkState.active) return;
+            const elapsed = simController.simTime - benchmarkState.lastSnapshotAt;
+            if (elapsed >= benchmarkState.duration) {
+                const snapshot = metricsCollector.takeSnapshot(mode);
+                dashboard.setSnapshot(mode, snapshot);
+                benchmarkState.lastSnapshotAt = simController.simTime;
+            }
+        }, 200);
+        return;
+    }
+
+    await runBenchmark(benchmarkState.duration);
+
+    const snapshot = metricsCollector.takeSnapshot(mode);
+    dashboard.setSnapshot(mode, snapshot);
+    updateStatusBadge('paused', mode === 'ai' ? 'AI Complete' : 'Fixed Complete');
+    stopBenchmark(false);
+}
+
+function stopBenchmark(pauseSim = true) {
+    if (benchmarkState.intervalId) {
+        clearInterval(benchmarkState.intervalId);
+        benchmarkState.intervalId = null;
+    }
+
+    if (pauseSim && simController.running) {
+        simController.pause();
+    }
+
+    benchmarkState.active = false;
+    benchmarkState.mode = null;
+
+    simController.setSpeed(1);
+    document.getElementById('speed-display').textContent = '1×';
+    simController.aiController = state.aiEnabled ? aiController : fixedController;
 }
 
 // ─── Keyboard Shortcuts ────────────────────────────────────
@@ -686,6 +788,8 @@ document.addEventListener('keydown', (e) => {
         case 'r': if (state.mode === 'EDITOR') selectTool('ROAD'); break;
         case 'o': if (state.mode === 'EDITOR') selectTool('ROUNDABOUT'); break;
         case 's': if (state.mode === 'EDITOR') selectTool('SIGNAL'); break;
+        case 'h': if (state.mode === 'EDITOR') selectTool('HOSPITAL'); break;
+        case 'f': if (state.mode === 'EDITOR') selectTool('FIRE_STATION'); break;
         case 'x': if (state.mode === 'EDITOR') selectTool('DELETE'); break;
         case 'escape':
             editor.setTool(Tools.SELECT);
@@ -723,6 +827,8 @@ document.getElementById('btn-help')?.addEventListener('click', () => {
         `  J — Junction tool\n` +
         `  R — Road tool\n` +
         `  S — Signal tool\n` +
+        `  H — Hospital tool\n` +
+        `  F — Fire station tool\n` +
         `  X — Delete tool\n` +
         `  Ctrl+Z / Ctrl+Y — Undo / Redo\n\n` +
         `SIMULATION MODE:\n` +

@@ -354,6 +354,45 @@ export class Renderer {
                     ctx.restore();
                 }
             }
+
+            if (junction.facility) {
+                const badgeRadius = 8;
+                const offset = radius + 8;
+                const bx = junction.x + offset;
+                const by = junction.y - offset;
+                const label = junction.facility === 'hospital' ? 'H' : 'F';
+                const fill = junction.facility === 'hospital' ? '#0ea5e9' : '#f97316';
+
+                ctx.fillStyle = fill;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(bx, by, badgeRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = '#0b1220';
+                ctx.font = 'bold 9px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, bx, by + 0.5);
+            }
+
+            if (simState.spawn && simState.spawn.enabled) {
+                if (junction.id === simState.spawn.originId || junction.id === simState.spawn.destinationId) {
+                    const isOrigin = junction.id === simState.spawn.originId;
+                    ctx.save();
+                    ctx.strokeStyle = isOrigin ? 'rgba(34, 197, 94, 0.9)' : 'rgba(59, 130, 246, 0.9)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 6]);
+                    ctx.lineDashOffset = -this._animTime * 18;
+                    ctx.beginPath();
+                    ctx.arc(junction.x, junction.y, radius + 8, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.restore();
+                }
+            }
         }
     }
 
@@ -449,7 +488,8 @@ export class Renderer {
                 // Draw Timer
                 const timeLeft = signal.timers && signal.timers[lane.id] !== undefined ? signal.timers[lane.id] : 0;
                 ctx.fillStyle = phase === 'green' ? '#00ff64' : (phase === 'yellow' ? '#ffc800' : '#ff3232');
-                ctx.font = 'bold 10px monospace';
+                const fontSize = Math.max(9, 10 / this.camera.zoom);
+                ctx.font = `bold ${fontSize}px monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(`${timeLeft}s`, signalX + normal.x * 12, signalY + normal.y * 12);
@@ -740,6 +780,22 @@ export class Renderer {
             ctx.moveTo(gp.fromJunction.x, gp.fromJunction.y);
             ctx.lineTo(gp.x, gp.y);
             ctx.stroke();
+        } else if (gp.type === 'facility') {
+            const label = gp.facility === 'hospital' ? 'H' : 'F';
+            const fill = gp.facility === 'hospital' ? '#0ea5e9' : '#f97316';
+            ctx.fillStyle = fill;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(gp.x, gp.y, 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#0b1220';
+            ctx.font = 'bold 10px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(label, gp.x, gp.y + 0.5);
         }
 
         ctx.globalAlpha = 1;
@@ -844,6 +900,22 @@ export class Renderer {
         ctx.fillText(`Zoom: ${(this.camera.zoom * 100).toFixed(0)}%  |  Mode: ${mode}`, 20, 60);
 
         ctx.restore();
+
+        if (simState.spawn && simState.spawn.enabled) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(10, 15, 30, 0.7)';
+            ctx.fillRect(10, 80, 230, 44);
+            ctx.strokeStyle = 'rgba(100, 150, 255, 0.2)';
+            ctx.strokeRect(10, 80, 230, 44);
+
+            ctx.fillStyle = 'rgba(200, 220, 255, 0.8)';
+            ctx.font = '11px Inter, sans-serif';
+            ctx.textAlign = 'left';
+            const hint = simState.spawn.originId ? 'Select destination junction' : 'Select origin junction';
+            ctx.fillText(`Click Spawn: ${simState.spawn.vehicleType || 'CAR'}`, 20, 98);
+            ctx.fillText(hint, 20, 114);
+            ctx.restore();
+        }
 
         // Rain overlay effect
         if (simState.events && simState.events.some(e => e.type === 'rain')) {

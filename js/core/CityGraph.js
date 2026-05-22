@@ -19,6 +19,11 @@ export const RoadType = {
     RESIDENTIAL: 'residential',
 };
 
+export const FacilityType = {
+    HOSPITAL: 'hospital',
+    FIRE_STATION: 'fire-station',
+};
+
 export const LANE_WIDTH = 14;
 
 let _nextJunctionId = 1;
@@ -45,7 +50,8 @@ export class CityGraph {
             signalState: null,
             signalPhases: null,
             internalCurves: [], // BezierCurve connections
-            crossings: []       // Pedestrian crossings
+            crossings: [],      // Pedestrian crossings
+            facility: null
         };
         this.junctions.set(id, junction);
         this._adjacency.set(id, new Set());
@@ -380,6 +386,19 @@ export class CityGraph {
     getSignalizedJunctions() {
         return Array.from(this.junctions.values()).filter(j => j.signalState);
     }
+
+    getFacilities(type = null) {
+        const all = Array.from(this.junctions.values()).filter(j => j.facility);
+        if (!type) return all;
+        return all.filter(j => j.facility === type);
+    }
+
+    setFacility(junctionId, type) {
+        const junction = this.junctions.get(junctionId);
+        if (!junction) return false;
+        junction.facility = type;
+        return true;
+    }
     
     getEntryExitPoints() {
         return Array.from(this.junctions.values()).filter(j => j.type === JunctionType.ENTRY_EXIT || j.connections.length <= 2);
@@ -397,6 +416,7 @@ export class CityGraph {
                 signalState: j.signalState ? { ...j.signalState } : null,
                 signalPhases: j.signalPhases ? { ...j.signalPhases } : null,
                 signalConfig: j.signalConfig ? { ...j.signalConfig } : null,
+                facility: j.facility || null,
             })),
             roads: Array.from(this.roads.values()).map(r => ({
                 id: r.id, from: r.from, to: r.to, type: r.type, lanes: r.lanes, speedLimit: r.speedLimit, bidirectional: r.bidirectional
@@ -418,6 +438,7 @@ export class CityGraph {
                     signalState: j.signalState || null,
                     signalPhases: j.signalPhases || null,
                     signalConfig: j.signalConfig || null,
+                    facility: j.facility || null,
                     connections: [],
                     internalCurves: [],
                     crossings: j.crossings || [],

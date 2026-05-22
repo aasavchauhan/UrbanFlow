@@ -3,7 +3,7 @@
  * Handles tool selection, mouse events, junction/road placement, and undo/redo.
  */
 import { Events } from '../core/EventBus.js';
-import { JunctionType, RoadType } from '../core/CityGraph.js';
+import { FacilityType, JunctionType, RoadType } from '../core/CityGraph.js';
 import { GridSystem } from './GridSystem.js';
 
 // Tool modes
@@ -13,6 +13,8 @@ export const Tools = {
     ROAD: 'ROAD',
     ROUNDABOUT: 'ROUNDABOUT',
     SIGNAL: 'SIGNAL',
+    HOSPITAL: 'HOSPITAL',
+    FIRE_STATION: 'FIRE_STATION',
     DELETE: 'DELETE',
 };
 
@@ -69,6 +71,8 @@ export class EditorController {
             case Tools.ROAD: this.canvas.style.cursor = 'crosshair'; break;
             case Tools.ROUNDABOUT: this.canvas.style.cursor = 'crosshair'; break;
             case Tools.SIGNAL: this.canvas.style.cursor = 'pointer'; break;
+            case Tools.HOSPITAL: this.canvas.style.cursor = 'crosshair'; break;
+            case Tools.FIRE_STATION: this.canvas.style.cursor = 'crosshair'; break;
             case Tools.DELETE: this.canvas.style.cursor = 'crosshair'; break;
         }
     }
@@ -142,6 +146,14 @@ export class EditorController {
                 this._toggleSignal(worldPos);
                 break;
 
+            case Tools.HOSPITAL:
+                this._placeFacility(worldPos, FacilityType.HOSPITAL);
+                break;
+
+            case Tools.FIRE_STATION:
+                this._placeFacility(worldPos, FacilityType.FIRE_STATION);
+                break;
+
             case Tools.DELETE:
                 this._deleteAt(worldPos);
                 break;
@@ -190,6 +202,14 @@ export class EditorController {
         } else if (this.activeTool === Tools.ROUNDABOUT) {
             const snapped = this.grid.snap(worldPos.x, worldPos.y);
             this.renderer.ghostPreview = { type: 'roundabout', x: snapped.x, y: snapped.y };
+        } else if (this.activeTool === Tools.HOSPITAL || this.activeTool === Tools.FIRE_STATION) {
+            const snapped = this.grid.snap(worldPos.x, worldPos.y);
+            this.renderer.ghostPreview = {
+                type: 'facility',
+                x: snapped.x,
+                y: snapped.y,
+                facility: this.activeTool === Tools.HOSPITAL ? FacilityType.HOSPITAL : FacilityType.FIRE_STATION
+            };
         } else if (this.activeTool === Tools.ROAD && this._roadStartJunction) {
             // Magnetic snap to hovered junction if it exists
             const targetX = this.hoveredJunction ? this.hoveredJunction.x : worldPos.x;
@@ -263,6 +283,23 @@ export class EditorController {
             this.cityGraph.addRoad(newJId, rTo, config);
         }
         this.eventBus.emit(Events.CITY_CHANGED, { reason: 'junction:placed' });
+    }
+
+    _placeFacility(worldPos, facilityType) {
+        const snapped = this.grid.snap(worldPos.x, worldPos.y);
+        let target = this.cityGraph.findJunctionNear(snapped.x, snapped.y, 30);
+
+        this._saveUndo();
+
+        if (!target) {
+            const newJId = this.cityGraph.addJunction(snapped.x, snapped.y, JunctionType.INTERSECTION);
+            target = this.cityGraph.getJunction(newJId);
+        }
+
+        if (!target) return;
+
+        target.facility = facilityType;
+        this.eventBus.emit(Events.CITY_CHANGED, { reason: 'facility:placed' });
     }
 
     _placeRoundabout(worldPos) {
