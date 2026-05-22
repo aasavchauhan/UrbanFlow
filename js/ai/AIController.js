@@ -36,6 +36,11 @@ export class AIController {
 
         // Emergency tracking
         this._activeEmergencies = new Set();
+        this._decisionState = {
+            laneSpeedHints: {},
+            signalStrategies: {},
+            recentActions: [],
+        };
     }
 
     /**
@@ -107,6 +112,9 @@ export class AIController {
      * Evaluate all signals and adjust green durations adaptively.
      */
     _evaluateAndAdjust(signals, vehicleManager) {
+        const laneSpeedHints = {};
+        const signalStrategies = {};
+
         for (const [junctionId, signal] of signals) {
             if (signal.preempted) continue;
 
@@ -151,6 +159,38 @@ export class AIController {
             phaseScores.sort((a, b) => b.score - a.score);
             const topPhase = phaseScores[0];
             const secondPhase = phaseScores[1];
+            const bestPhaseIndex = topPhase ? topPhase.phaseIndex : signal.currentPhaseIndex;
+            const strategyReason = topPhase && topPhase.downstreamPressure > 0.7
+                ? 'Spillback guard'
+                : topPhase && topPhase.score > 0
+                    ? 'Demand response'
+                    : 'Balanced cycle';
+
+            signalStrategies[junctionId] = {
+                bestPhaseIndex,
+                bestScore: topPhase ? Math.round(topPhase.score) : 0,
+                reason: strategyReason,
+                downstreamPressure: topPhase ? topPhase.downstreamPressure : 0,
+            };
+
+            phaseGroups.forEach((group, phaseIndex) => {
+                for (const laneId of group) {
+                    const downstream = this._getDownstreamPressure(laneId);
+                    const isPriorityPhase = phaseIndex === bestPhaseIndex;
+                    let factor = 1;
+                    let reason = 'Cruise';
+
+                    if (downstream > 0.7) {
+                        factor = 0.45;
+                        reason = 'Spillback slow zone';
+                    } else if (isPriorityPhase && topPhase && topPhase.score > 0) {
+                        factor = 1.18;
+                        reason = 'Green wave';
+                    }
+
+                    laneSpeedHints[laneId] = { factor, reason, downstream };
+                }
+            });
 
             // Adjust green duration proportionally
             if (topPhase && secondPhase) {
@@ -184,8 +224,12 @@ export class AIController {
                     fromPhase: signal.currentPhaseIndex,
                     toPhase: bestPhase.phaseIndex,
                 });
+                this._rememberAction(`${junctionId}: ${bestPhase.downstreamPressure > 0.7 ? 'spillback guard' : 'demand switch'}`);
             }
         }
+
+        this._decisionState.laneSpeedHints = laneSpeedHints;
+        this._decisionState.signalStrategies = signalStrategies;
 
         // Update flow history
         this._updateFlowHistory(vehicleManager);
@@ -254,5 +298,19 @@ export class AIController {
                 history.shift();
             }
         }
+    }
+
+    _rememberAction(label) {
+        this._decisionState.recentActions.unshift(label);
+        this._decisionState.recentActions = this._decisionState.recentActions.slice(0, 5);
+    }
+
+    getState() {
+        return {
+            mode: this._activeEmergencies.size > 0 ? 'Emergency priority' : 'Adaptive',
+            laneSpeedHints: { ...this._decisionState.laneSpeedHints },
+            signalStrategies: { ...this._decisionState.signalStrategies },
+            recentActions: [...this._decisionState.recentActions],
+        };
     }
 }

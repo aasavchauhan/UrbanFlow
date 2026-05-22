@@ -99,15 +99,19 @@ export class SimulationController {
 
         // 4. Build signal states for vehicles
         const signalStates = this._getSignalStates();
+        const aiState = this.aiController && typeof this.aiController.getState === 'function'
+            ? this.aiController.getState()
+            : null;
 
         // 5. Update vehicles
-        this.vehicleManager.update(scaledDt, signalStates);
+        this.vehicleManager.update(scaledDt, signalStates, aiState);
 
         // 6. Emit tick event
         this.eventBus.emit(Events.SIM_TICK, {
             simTime: this.simTime,
             tickCount: this.tickCount,
             signalStates,
+            aiState,
         });
     }
 
@@ -290,6 +294,9 @@ export class SimulationController {
             speed: this.speed,
             tickCount: this.tickCount,
             signalStates: this._getSignalStates(),
+            aiState: this.aiController && typeof this.aiController.getState === 'function'
+                ? this.aiController.getState()
+                : null,
             activeEvents: this.activeEvents,
         };
     }

@@ -36,7 +36,7 @@ export class VehicleManager {
      * @param {number} dt - Delta time in seconds
      * @param {object} signalStates - Map of junctionId → signal info
      */
-    update(dt, signalStates = {}) {
+    update(dt, signalStates = {}, aiState = null) {
         // Auto-spawn
         if (this.autoSpawnEnabled) {
             this._spawnAccumulator += dt * this.autoSpawnRate;
@@ -51,7 +51,14 @@ export class VehicleManager {
         for (const vehicle of this.vehicles) {
             // Apply weather speed modifier
             const originalMax = vehicle.maxSpeed;
-            vehicle.maxSpeed *= this.speedMultiplier;
+            let speedFactor = this.speedMultiplier;
+            if (aiState?.laneSpeedHints && vehicle.geomType === 'lane') {
+                const hint = aiState.laneSpeedHints[vehicle.currentGeomId];
+                if (hint?.factor) {
+                    speedFactor *= hint.factor;
+                }
+            }
+            vehicle.maxSpeed *= speedFactor;
 
             vehicle.update(dt, signalStates, this.vehicles);
 

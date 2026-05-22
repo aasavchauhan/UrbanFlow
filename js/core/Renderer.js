@@ -157,6 +157,11 @@ export class Renderer {
         // Layer 5: Junctions
         this._drawJunctions(ctx, cityGraph, simState);
 
+        // Layer 5.5: AI strategy overlays
+        if (simState.aiEnabled && simState.aiState) {
+            this._drawAIOverlays(ctx, cityGraph, simState.aiState);
+        }
+
         // Layer 6: Traffic signals
         this._drawSignals(ctx, cityGraph, simState);
 
@@ -449,6 +454,68 @@ export class Renderer {
                 ctx.textBaseline = 'middle';
                 ctx.fillText(`${timeLeft}s`, signalX + normal.x * 12, signalY + normal.y * 12);
             }
+        }
+    }
+
+    _drawAIOverlays(ctx, cityGraph, aiState) {
+        const hints = aiState.laneSpeedHints || {};
+
+        for (const [laneId, hint] of Object.entries(hints)) {
+            const lane = cityGraph.lanes.get(laneId);
+            if (!lane || !hint) continue;
+
+            const isGreenWave = hint.reason === 'Green wave';
+            const isSlowZone = hint.reason === 'Spillback slow zone';
+            if (!isGreenWave && !isSlowZone) continue;
+
+            const p0 = lane.geom.getPoint(0.08);
+            const p1 = lane.geom.getPoint(0.92);
+            const mid = lane.geom.getPoint(0.56);
+            const tangent = lane.geom.getTangent(0.56);
+            const color = isGreenWave ? 'rgba(34, 197, 94, 0.72)' : 'rgba(245, 158, 11, 0.82)';
+
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = isGreenWave ? 3 : 4;
+            ctx.setLineDash(isGreenWave ? [12, 10] : [4, 7]);
+            ctx.lineDashOffset = -this._animTime * (isGreenWave ? 26 : 12);
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.translate(mid.x, mid.y);
+            ctx.rotate(Math.atan2(tangent.y, tangent.x));
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(9, 0);
+            ctx.lineTo(-5, -5);
+            ctx.lineTo(-2, 0);
+            ctx.lineTo(-5, 5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        for (const [junctionId, strategy] of Object.entries(aiState.signalStrategies || {})) {
+            const junction = cityGraph.getJunction(junctionId);
+            if (!junction || !strategy || strategy.bestScore <= 0) continue;
+
+            const pulse = 0.55 + Math.sin(this._animTime * 4) * 0.18;
+            const color = strategy.reason === 'Spillback guard'
+                ? `rgba(245, 158, 11, ${pulse})`
+                : `rgba(34, 197, 94, ${pulse})`;
+
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 5]);
+            ctx.beginPath();
+            ctx.arc(junction.x, junction.y, Math.max(24, junction.connections.length * 8), 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
         }
     }
 

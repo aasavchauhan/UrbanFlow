@@ -769,6 +769,38 @@ input[type="range"]::-webkit-slider-thumb:hover {
     line-height: 1.35;
 }
 
+.ai-live-panel {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+}
+
+.ai-live-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+}
+
+.ai-live-row strong {
+    color: var(--color-text-primary);
+    font-family: var(--font-mono);
+    font-weight: 600;
+}
+
+.ai-live-decision {
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--color-border);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-accent);
+    line-height: 1.35;
+}
+
 /* ─── Chart Container ──────────────────────────────────────── */
 .chart-container {
     width: 100%;

@@ -227,8 +227,15 @@ function mainLoop(timestamp) {
     renderer.heatmapData = heatmap.getData();
 
     // Build render state
+    const aiState = state.aiEnabled && typeof aiController.getState === 'function'
+        ? aiController.getState()
+        : null;
+    updateAIStatus(aiState);
+
     const simState = {
         mode: state.mode,
+        aiEnabled: state.aiEnabled,
+        aiState,
         vehicles: vehicleManager.getRenderData(),
         signals: simController._getSignalStates(),
         events: simController.activeEvents,
@@ -244,6 +251,36 @@ function mainLoop(timestamp) {
     renderer.render(cityGraph, simState);
 
     requestAnimationFrame(mainLoop);
+}
+
+function updateAIStatus(aiState) {
+    const modeEl = document.getElementById('ai-live-mode');
+    const greenEl = document.getElementById('ai-live-greenwaves');
+    const slowEl = document.getElementById('ai-live-slowzones');
+    const decisionEl = document.getElementById('ai-live-decision');
+    if (!modeEl || !greenEl || !slowEl || !decisionEl) return;
+
+    if (!state.aiEnabled || !aiState) {
+        modeEl.textContent = 'Standby';
+        greenEl.textContent = '0';
+        slowEl.textContent = '0';
+        decisionEl.textContent = 'Enable AI to view live coordination cues.';
+        return;
+    }
+
+    const hints = Object.values(aiState.laneSpeedHints || {});
+    const greenWaves = hints.filter(h => h.reason === 'Green wave').length;
+    const slowZones = hints.filter(h => h.reason === 'Spillback slow zone').length;
+    const activeStrategies = Object.values(aiState.signalStrategies || {})
+        .filter(s => s.bestScore > 0)
+        .sort((a, b) => b.bestScore - a.bestScore);
+
+    modeEl.textContent = aiState.mode || 'Adaptive';
+    greenEl.textContent = greenWaves;
+    slowEl.textContent = slowZones;
+    decisionEl.textContent = activeStrategies.length > 0
+        ? `${activeStrategies[0].reason}: priority score ${activeStrategies[0].bestScore}`
+        : 'Scanning queues, platoons, and downstream capacity.';
 }
 
 requestAnimationFrame((ts) => {
