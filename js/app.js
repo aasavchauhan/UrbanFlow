@@ -44,6 +44,7 @@ const fixedController = new FixedController();
 const metricsCollector = new MetricsCollector();
 const dashboard = new Dashboard(metricsCollector);
 const heatmap = new Heatmap();
+const SESSION_STORAGE_KEY = 'urbanflow_session';
 
 // Set default AI controller based on initial state
 simController.aiController = state.aiEnabled ? aiController : fixedController;
@@ -67,6 +68,84 @@ let autoSaveEnabled = false;
 
 function saveCurrentCity() {
     cityGraph.saveSession();
+    updateSavedPresetState();
+}
+
+function loadSavedCity(showAlert = true) {
+    if (cityGraph.loadSession()) {
+        simController.reset();
+        renderer.centerOn(0, 0);
+        renderer.camera.zoom = 1;
+        vehicleManager.pathfinder.clearCache();
+        eventBus.emit(Events.PRESET_LOADED, { name: 'saved-session' });
+        if (showAlert) alert('Saved city loaded.');
+        return true;
+    }
+
+    if (showAlert) alert('No saved city found in this browser.');
+    return false;
+}
+
+function updateSavedPresetState() {
+    const savedButton = document.getElementById('preset-saved-city');
+    const savedDesc = document.getElementById('saved-city-desc');
+    if (!savedButton || !savedDesc) return;
+
+    const savedJson = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!savedJson) {
+        savedButton.disabled = true;
+        savedDesc.textContent = 'No browser save yet';
+        return;
+    }
+
+    try {
+        const data = JSON.parse(savedJson);
+        savedButton.disabled = false;
+        savedDesc.textContent = `${data.junctions?.length || 0} junctions, ${data.roads?.length || 0} roads`;
+    } catch {
+        savedButton.disabled = true;
+        savedDesc.textContent = 'Saved city is unreadable';
+    }
+}
+
+function exportCurrentCity() {
+    const data = cityGraph.toJSON();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    link.href = url;
+    link.download = `urbanflow-city-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
+function importCityFile(file) {
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const data = JSON.parse(reader.result);
+            if (!cityGraph.fromJSON(data)) {
+                alert('Could not import this city file.');
+                return;
+            }
+
+            simController.reset();
+            renderer.centerOn(0, 0);
+            renderer.camera.zoom = 1;
+            vehicleManager.pathfinder.clearCache();
+            saveCurrentCity();
+            eventBus.emit(Events.PRESET_LOADED, { name: 'imported-city' });
+            alert('City imported and saved in this browser.');
+        } catch {
+            alert('Invalid city JSON file.');
+        }
+    };
+    reader.readAsText(file);
 }
 
 function scheduleAutoSave() {
@@ -85,6 +164,7 @@ function initializeCity() {
         loadPreset('grid');
     }
     autoSaveEnabled = true;
+    updateSavedPresetState();
 }
 
 initializeCity();
@@ -212,29 +292,37 @@ document.getElementById('btn-zoom-reset')?.addEventListener('click', () => {
 });
 
 // ─── Preset Layouts ────────────────────────────────────────
-document.querySelectorAll('.preset-btn').forEach(btn => {
+document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
     btn.addEventListener('click', () => {
         loadPreset(btn.dataset.preset);
     });
 });
 
+document.getElementById('preset-saved-city')?.addEventListener('click', () => {
+    loadSavedCity();
+});
+
 // ─── Session Management ────────────────────────────────────
 document.getElementById('btn-save-session')?.addEventListener('click', () => {
     saveCurrentCity();
-    alert('Session saved successfully.');
+    alert('City saved in this browser.');
 });
 
 document.getElementById('btn-load-session')?.addEventListener('click', () => {
-    if (cityGraph.loadSession()) {
-        simController.reset();
-        renderer.centerOn(0, 0);
-        renderer.camera.zoom = 1;
-        vehicleManager.pathfinder.clearCache();
-        eventBus.emit(Events.PRESET_LOADED, { name: 'saved-session' });
-        alert('Session loaded successfully.');
-    } else {
-        alert('No saved session found or failed to load.');
-    }
+    loadSavedCity();
+});
+
+document.getElementById('btn-export-city')?.addEventListener('click', () => {
+    exportCurrentCity();
+});
+
+document.getElementById('btn-import-city')?.addEventListener('click', () => {
+    document.getElementById('input-import-city')?.click();
+});
+
+document.getElementById('input-import-city')?.addEventListener('change', (e) => {
+    importCityFile(e.target.files?.[0]);
+    e.target.value = '';
 });
 
 // ─── Simulation Controls ───────────────────────────────────
@@ -458,6 +546,7 @@ document.getElementById('btn-remove-signal')?.addEventListener('click', () => {
 eventBus.on(Events.CITY_CHANGED, () => {
     vehicleManager.pathfinder.clearCache();
     scheduleAutoSave();
+    updateSavedPresetState();
 });
 
 // Close signal config panel

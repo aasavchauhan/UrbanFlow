@@ -133,19 +133,20 @@
                                     <div class="preset-desc">Main highway with side streets — 18 junctions</div>
                                 </div>
                             </button>
+                            <button class="preset-btn" id="preset-saved-city" disabled>
+                                <div class="preset-icon">SV</div>
+                                <div class="preset-info">
+                                    <div class="preset-name">Saved City</div>
+                                    <div class="preset-desc" id="saved-city-desc">No browser save yet</div>
+                                </div>
+                            </button>
                         </div>
-                    </div>
-                </div>
-
-                <!-- Session Management -->
-                <div class="panel-section">
-                    <div class="panel-section-header">
-                        <span>Session</span>
-                    </div>
-                    <div class="panel-section-body">
-                        <div class="btn-group">
+                        <div class="city-save-actions">
                             <button class="btn btn-sm btn-primary" id="btn-save-session">Save</button>
                             <button class="btn btn-sm" id="btn-load-session">Load</button>
+                            <button class="btn btn-sm" id="btn-export-city">Export</button>
+                            <button class="btn btn-sm" id="btn-import-city">Import</button>
+                            <input type="file" id="input-import-city" accept="application/json,.json" hidden>
                         </div>
                     </div>
                 </div>
@@ -297,6 +298,74 @@
 
             <!-- ─── Compare Panel ─── -->
             <div class="sidebar-panel" id="panel-compare">
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>AI Strategy Playbook</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="ai-strategy-stack">
+                            <div class="ai-strategy-card">
+                                <div class="ai-strategy-kicker">Demand Responsive</div>
+                                <div class="ai-strategy-title">Queue-weighted adaptive phases</div>
+                                <div class="ai-strategy-copy">Every approach gets a live priority score from queue length, accumulated wait time, incoming pressure, and vehicle priority. Green time expands for heavy demand and contracts when an approach is empty.</div>
+                            </div>
+                            <div class="ai-strategy-card">
+                                <div class="ai-strategy-kicker">Network Coordination</div>
+                                <div class="ai-strategy-title">Green wave corridor control</div>
+                                <div class="ai-strategy-copy">Adjacent junctions coordinate offsets so platoons released from one signal meet green at the next, reducing stop-start traffic on arterial roads and ring routes.</div>
+                            </div>
+                            <div class="ai-strategy-card">
+                                <div class="ai-strategy-kicker">Grid Protection</div>
+                                <div class="ai-strategy-title">Downstream spillback prevention</div>
+                                <div class="ai-strategy-copy">A signal avoids releasing cars into a blocked or saturated next road. This prevents junction boxes from filling and keeps cross traffic usable during congestion waves.</div>
+                            </div>
+                            <div class="ai-strategy-card">
+                                <div class="ai-strategy-kicker">Priority Routing</div>
+                                <div class="ai-strategy-title">Emergency preemption</div>
+                                <div class="ai-strategy-copy">Ambulance and fire-truck routes request early green at upcoming junctions, while nearby conflicting phases hold red long enough to clear the path safely.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <span>Traffic Situations & AI Response</span>
+                    </div>
+                    <div class="panel-section-body">
+                        <div class="ai-situation-list">
+                            <div class="ai-situation-row">
+                                <span class="ai-situation">Long queue on one approach</span>
+                                <span class="ai-response">extend green, switch early from low-demand phases</span>
+                            </div>
+                            <div class="ai-situation-row">
+                                <span class="ai-situation">Previous junction releases a platoon</span>
+                                <span class="ai-response">predict arrival and prepare green wave offset</span>
+                            </div>
+                            <div class="ai-situation-row">
+                                <span class="ai-situation">Next road is full</span>
+                                <span class="ai-response">hold upstream red to prevent spillback</span>
+                            </div>
+                            <div class="ai-situation-row">
+                                <span class="ai-situation">Emergency vehicle approaching</span>
+                                <span class="ai-response">preempt route and clear conflicts</span>
+                            </div>
+                            <div class="ai-situation-row">
+                                <span class="ai-situation">Road blockage or accident</span>
+                                <span class="ai-response">reroute flow and reduce entry into blocked link</span>
+                            </div>
+                            <div class="ai-situation-row">
+                                <span class="ai-situation">Rain or low-speed traffic</span>
+                                <span class="ai-response">increase clearance time and lower release rate</span>
+                            </div>
+                            <div class="ai-situation-row">
+                                <span class="ai-situation">Balanced low traffic</span>
+                                <span class="ai-response">short cycles to reduce unnecessary waiting</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="panel-section">
                     <div class="panel-section-header">
                         <span>Fixed vs AI — Benchmark</span>

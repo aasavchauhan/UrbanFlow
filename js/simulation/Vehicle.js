@@ -11,6 +11,8 @@ const VEHICLE_PROPS = {
 };
 
 const CAR_COLORS = ['#60a5fa', '#a78bfa', '#34d399', '#f472b6', '#818cf8', '#67e8f9', '#fbbf24'];
+const SIGNAL_STOP_BUFFER = 6;
+const QUEUE_GAP = 6;
 
 let _nextVehicleId = 1;
 
@@ -138,7 +140,7 @@ export class Vehicle {
         }
 
         let targetSpeed = this.maxSpeed;
-        const MIN_FOLLOW_DIST = this.size + 15; 
+        const MIN_FOLLOW_DIST = Math.max(this.size, 12) + QUEUE_GAP; 
         
         let stoppingForSignal = false;
         let yieldingToTraffic = false;
@@ -149,15 +151,17 @@ export class Vehicle {
             if (followDist < 0) {
                 targetSpeed = 0;
             } else {
-                const safeSpeed = Math.sqrt(2 * this.decel * Math.max(0, followDist));
-                targetSpeed = Math.min(targetSpeed, safeSpeed, vehicleAhead.speed);
+                const leaderSpeed = Math.max(0, vehicleAhead.speed || 0);
+                const safeSpeed = Math.sqrt((leaderSpeed * leaderSpeed) + (2 * this.decel * Math.max(0, followDist)));
+                targetSpeed = Math.min(targetSpeed, safeSpeed);
             }
         }
 
         // ─── 2. Signal & Intersection Entry (approaching end of lane) ───
         if (this.geomType === 'lane') {
-            // Stop line is 1 vehicle-length before the end of the lane
-            const stopLineDist = distRemaining - this.size;
+            // Stop as close as safely possible to the signalized junction.
+            // distRemaining is measured from the vehicle center to the lane end.
+            const stopLineDist = distRemaining - SIGNAL_STOP_BUFFER;
             
             // Dynamic check distance: fast vehicles need more room to realize they must brake
             const reqBrakeDist = (this.speed * this.speed) / (2 * this.decel);
@@ -319,7 +323,7 @@ export class Vehicle {
         // If we're on a lane and the signal is not green, clamp progress
         // so the vehicle can never overshoot the stop line.
         if (this.geomType === 'lane' && (signalPhase === 'red' || signalPhase === 'yellow') && this.priority === 0) {
-            const maxProgress = (length - this.size) / length;
+            const maxProgress = (length - SIGNAL_STOP_BUFFER) / length;
             if (this.progress > maxProgress && stoppingForSignal) {
                 this.progress = maxProgress;
                 this.speed = 0;

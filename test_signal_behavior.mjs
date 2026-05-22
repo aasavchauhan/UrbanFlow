@@ -32,7 +32,7 @@ const firstLane = cityGraph.lanes.get(vehicle.currentGeomId);
 assert.equal(vehicle.size, 14, 'vehicle size must be initialized for stop-line math');
 assert.equal(firstLane.endNode, 'j2', 'test vehicle should approach the j2 signal');
 
-const stopLineProgress = (firstLane.geom.length - vehicle.size) / firstLane.geom.length;
+const stopLineProgress = (firstLane.geom.length - 6) / firstLane.geom.length;
 vehicle.progress = stopLineProgress;
 vehicle.speed = 0;
 vehicle.state = 'waiting';
@@ -65,7 +65,7 @@ for (let tick = 0; tick < 1000; tick++) {
 
         if (signal) {
             const phase = signal.phases[lane.id] || signal.state;
-            const stopLineProgress = (lane.geom.length - vehicle.size) / lane.geom.length;
+            const stopLineProgress = (lane.geom.length - 6) / lane.geom.length;
 
             if (phase === 'red' && vehicle.state === 'waiting') {
                 stoppedOnRed = true;
@@ -97,5 +97,36 @@ assert.deepEqual(
     { greenDuration: 17, yellowDuration: 4 },
     'signal config should persist with the saved map'
 );
+
+const queueGraph = new CityGraph(eventBus);
+queueGraph.fromJSON(PresetLayouts.generate('grid'));
+const leader = new Vehicle({ type: 'CAR', route: ['j6', 'j2', 'j1'], cityGraph: queueGraph });
+const follower = new Vehicle({ type: 'CAR', route: ['j6', 'j2', 'j1'], cityGraph: queueGraph });
+const queueLane = queueGraph.lanes.get(leader.currentGeomId);
+const queueStopProgress = (queueLane.geom.length - 6) / queueLane.geom.length;
+
+leader.progress = queueStopProgress;
+leader.speed = 0;
+leader.state = 'waiting';
+leader._updateTransform(leader.progress, queueLane);
+
+follower.progress = 0;
+follower.speed = 0;
+follower.state = 'moving';
+follower._updateTransform(follower.progress, queueLane);
+
+const queueSignalStates = {
+    [queueLane.endNode]: {
+        phases: { [queueLane.id]: 'red' },
+        state: 'red',
+    },
+};
+
+for (let i = 0; i < 90; i++) {
+    follower.update(1 / 30, queueSignalStates);
+}
+
+assert.ok(follower.progress > 0.2, 'follower should close the queue instead of freezing at the lane start');
+assert.ok(follower.progress < leader.progress, 'follower should remain behind the stopped lead vehicle');
 
 console.log('Signal behavior regression passed.');

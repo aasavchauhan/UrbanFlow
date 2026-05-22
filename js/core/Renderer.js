@@ -363,8 +363,8 @@ export class Renderer {
                 const length = lane.geom.length;
                 if (length < 20) continue; // too short
                 
-                // Stop line at 1 vehicle-length from end (matches Vehicle.js clamp)
-                const stopT = Math.max(0, (length - 14) / length);
+                // Stop line near the signalized junction (matches Vehicle.js clamp)
+                const stopT = Math.max(0, (length - 6) / length);
                 const pt = lane.geom.getPoint(stopT);
                 const tangent = lane.geom.getTangent(stopT);
                 const normal = { x: -tangent.y, y: tangent.x };

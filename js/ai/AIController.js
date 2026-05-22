@@ -22,6 +22,13 @@ export class AIController {
         this.maxGreenTime = 55;    // seconds
         this.evaluationInterval = 2; // seconds between evaluations
         this._evalTimer = 0;
+        this.weights = {
+            queue: 12,
+            waitTime: 2,
+            approaching: 4,
+            upstreamFlow: 6,
+            downstreamBlock: 28,
+        };
 
         // Flow tracking for prediction
         this._flowHistory = new Map(); // roadId → [flowRate, flowRate, ...]
@@ -109,25 +116,35 @@ export class AIController {
             // Calculate priority score for each phase group
             const phaseScores = phaseGroups.map((group, idx) => {
                 let score = 0;
+                let downstreamPressure = 0;
                 for (const laneId of group) {
                     const queueLength = queues[laneId] || 0;
 
-                    // Base score: queue length
-                    score += queueLength * 10;
+                    score += queueLength * this.weights.queue;
 
                     // Waiting time bonus: penalize long waits
                     const waitingVehicles = vehicleManager.vehicles.filter(
                         v => v.currentGeomId === laneId && v.state === 'waiting'
                     );
                     for (const v of waitingVehicles) {
-                        score += v.waitTime * 2;
+                        score += v.waitTime * this.weights.waitTime;
                     }
 
-                    // Upstream pressure: check incoming traffic
+                    const approaching = this._getApproachingVehicles(laneId, vehicleManager);
+                    score += approaching * this.weights.approaching;
+
                     const upstreamFlow = this._getUpstreamFlow(laneId);
-                    score += upstreamFlow * 5;
+                    score += upstreamFlow * this.weights.upstreamFlow;
+
+                    const downstream = this._getDownstreamPressure(laneId);
+                    downstreamPressure = Math.max(downstreamPressure, downstream);
+                    score -= downstream * this.weights.downstreamBlock;
                 }
-                return { phaseIndex: idx, score };
+                return {
+                    phaseIndex: idx,
+                    score: Math.max(0, score),
+                    downstreamPressure,
+                };
             });
 
             // Find the highest-priority phase
@@ -163,7 +180,7 @@ export class AIController {
                 this.eventBus.emit(Events.AI_DECISION, {
                     type: 'phase_switch',
                     junctionId,
-                    reason: 'demand_imbalance',
+                    reason: bestPhase.downstreamPressure > 0.7 ? 'spillback_avoidance' : 'demand_imbalance',
                     fromPhase: signal.currentPhaseIndex,
                     toPhase: bestPhase.phaseIndex,
                 });
@@ -184,6 +201,42 @@ export class AIController {
         // Simple trend: average of last few measurements
         const recent = history.slice(-5);
         return recent.reduce((sum, val) => sum + val, 0) / recent.length;
+    }
+
+    _getApproachingVehicles(laneId, vehicleManager) {
+        let count = 0;
+        for (const vehicle of vehicleManager.vehicles) {
+            if (vehicle.currentGeomId === laneId && vehicle.progress > 0.2 && vehicle.state !== 'arrived') {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    _getDownstreamPressure(laneId) {
+        const lane = this.cityGraph.lanes.get(laneId);
+        if (!lane || !lane.nextLanes || lane.nextLanes.length === 0) return 0;
+
+        let worstPressure = 0;
+        for (const nextConn of lane.nextLanes) {
+            const connection = nextConn.id ? nextConn : this.cityGraph.connections.get(nextConn);
+            if (!connection) continue;
+
+            const targetLane = this.cityGraph.lanes.get(connection.toLane);
+            if (!targetLane) continue;
+
+            const targetRoad = this.cityGraph.roads.get(targetLane.roadId);
+            if (targetRoad?.blocked) {
+                worstPressure = Math.max(worstPressure, 1);
+                continue;
+            }
+
+            const capacity = Math.max(1, Math.floor(targetLane.geom.length / 18));
+            const pressure = Math.min(1, targetLane.vehicles.length / capacity);
+            worstPressure = Math.max(worstPressure, pressure);
+        }
+
+        return worstPressure;
     }
 
     /**
