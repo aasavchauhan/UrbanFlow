@@ -160,6 +160,11 @@ export class Renderer {
         // Layer 5: Junctions
         this._drawJunctions(ctx, cityGraph, simState);
 
+        // Layer 5.2: Curve handles (editor)
+        if (simState.editor) {
+            this._drawCurveHandles(ctx, cityGraph, simState.editor);
+        }
+
         // Layer 5.5: AI strategy overlays
         if (simState.aiEnabled && simState.aiState) {
             this._drawAIOverlays(ctx, cityGraph, simState.aiState);
@@ -240,22 +245,45 @@ export class Renderer {
             if (!fromJ || !toJ) continue;
 
             const roadWidth = road.lanes * 14;
+            const geom = road.geom;
+            const isCurve = geom && geom.p2 !== undefined;
+            const isPolyline = geom && geom.points !== undefined;
 
             // Road shadow
             ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
             ctx.lineWidth = roadWidth + 4;
             ctx.lineCap = 'round';
             ctx.beginPath();
-            ctx.moveTo(fromJ.x, fromJ.y);
-            ctx.lineTo(toJ.x, toJ.y);
+            if (isPolyline) {
+                ctx.moveTo(geom.points[0].x, geom.points[0].y);
+                for (let i = 1; i < geom.points.length; i++) {
+                    ctx.lineTo(geom.points[i].x, geom.points[i].y);
+                }
+            } else if (isCurve) {
+                ctx.moveTo(geom.p0.x, geom.p0.y);
+                ctx.quadraticCurveTo(geom.p1.x, geom.p1.y, geom.p2.x, geom.p2.y);
+            } else {
+                ctx.moveTo(fromJ.x, fromJ.y);
+                ctx.lineTo(toJ.x, toJ.y);
+            }
             ctx.stroke();
 
             // Road surface
             ctx.strokeStyle = road.blocked ? '#4a1c1c' : '#2a3040';
             ctx.lineWidth = roadWidth;
             ctx.beginPath();
-            ctx.moveTo(fromJ.x, fromJ.y);
-            ctx.lineTo(toJ.x, toJ.y);
+            if (isPolyline) {
+                ctx.moveTo(geom.points[0].x, geom.points[0].y);
+                for (let i = 1; i < geom.points.length; i++) {
+                    ctx.lineTo(geom.points[i].x, geom.points[i].y);
+                }
+            } else if (isCurve) {
+                ctx.moveTo(geom.p0.x, geom.p0.y);
+                ctx.quadraticCurveTo(geom.p1.x, geom.p1.y, geom.p2.x, geom.p2.y);
+            } else {
+                ctx.moveTo(fromJ.x, fromJ.y);
+                ctx.lineTo(toJ.x, toJ.y);
+            }
             ctx.stroke();
         }
     }
@@ -271,33 +299,20 @@ export class Renderer {
             const toJ = cityGraph.getJunction(road.to);
             if (!fromJ || !toJ) continue;
             const roadWidth = road.lanes * 14;
-            const dx = toJ.x - fromJ.x;
-            const dy = toJ.y - fromJ.y;
-            const len = Math.sqrt(dx * dx + dy * dy);
-            if (len === 0) continue;
-            
-            const nx = -dy / len * roadWidth / 2;
-            const ny = dx / len * roadWidth / 2;
-            
+            const geom = road.geom;
+            if (!geom || geom.length === 0) continue;
+            const half = roadWidth / 2;
+            const edgeSteps = Math.max(10, Math.floor(geom.length / 30));
+
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-            ctx.beginPath();
-            ctx.moveTo(fromJ.x + nx, fromJ.y + ny);
-            ctx.lineTo(toJ.x + nx, toJ.y + ny);
-            ctx.stroke();
-            
-            ctx.beginPath();
-            ctx.moveTo(fromJ.x - nx, fromJ.y - ny);
-            ctx.lineTo(toJ.x - nx, toJ.y - ny);
-            ctx.stroke();
+            this._strokeOffsetGeom(ctx, geom, half, edgeSteps);
+            this._strokeOffsetGeom(ctx, geom, -half, edgeSteps);
             
             // Center yellow line for bidirectional
             if (road.bidirectional) {
                 ctx.strokeStyle = 'rgba(255, 200, 0, 0.4)';
                 ctx.setLineDash([15, 10]);
-                ctx.beginPath();
-                ctx.moveTo(fromJ.x, fromJ.y);
-                ctx.lineTo(toJ.x, toJ.y);
-                ctx.stroke();
+                this._strokeGeom(ctx, geom, Math.max(12, Math.floor(geom.length / 28)));
                 ctx.setLineDash([]);
             }
         }
@@ -306,11 +321,23 @@ export class Renderer {
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
         ctx.setLineDash([8, 12]);
         for (const lane of cityGraph.lanes.values()) {
-            // Draw lane center as a faint debug line if needed, but normally we draw dividers
-            // Let's draw faint lane guides for the new V2 system
+            const geom = lane.geom;
+            const isBezier = geom && geom.p2 !== undefined;
+            const isPolyline = geom && geom.points !== undefined;
+
             ctx.beginPath();
-            ctx.moveTo(lane.geom.p0.x, lane.geom.p0.y);
-            ctx.lineTo(lane.geom.p1.x, lane.geom.p1.y);
+            if (isPolyline) {
+                ctx.moveTo(geom.points[0].x, geom.points[0].y);
+                for (let i = 1; i < geom.points.length; i++) {
+                    ctx.lineTo(geom.points[i].x, geom.points[i].y);
+                }
+            } else if (isBezier) {
+                ctx.moveTo(geom.p0.x, geom.p0.y);
+                ctx.quadraticCurveTo(geom.p1.x, geom.p1.y, geom.p2.x, geom.p2.y);
+            } else {
+                ctx.moveTo(geom.p0.x, geom.p0.y);
+                ctx.lineTo(geom.p1.x, geom.p1.y);
+            }
             ctx.stroke();
         }
         
@@ -327,6 +354,47 @@ export class Renderer {
             ctx.stroke();
         }
         ctx.setLineDash([]);
+    }
+
+    _strokeGeom(ctx, geom, steps = 16) {
+        if (!geom || geom.length === 0) return;
+        ctx.beginPath();
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const pt = geom.getPoint(t);
+            if (i === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
+    }
+
+    _strokeOffsetGeom(ctx, geom, offset, steps = 16) {
+        if (!geom || geom.length === 0) return;
+        ctx.beginPath();
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const pt = geom.getPoint(t);
+            const tangent = this._getSmoothTangent(geom, t, steps);
+            const normal = { x: -tangent.y, y: tangent.x };
+            const ox = pt.x + normal.x * offset;
+            const oy = pt.y + normal.y * offset;
+            if (i === 0) ctx.moveTo(ox, oy);
+            else ctx.lineTo(ox, oy);
+        }
+        ctx.stroke();
+    }
+
+    _getSmoothTangent(geom, t, steps) {
+        const eps = Math.max(1 / (steps * 2), 0.002);
+        const t0 = Math.max(0, t - eps);
+        const t1 = Math.min(1, t + eps);
+        if (t0 === t1) return geom.getTangent(t);
+        const p0 = geom.getPoint(t0);
+        const p1 = geom.getPoint(t1);
+        const dx = p1.x - p0.x;
+        const dy = p1.y - p0.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        return { x: dx / len, y: dy / len };
     }
 
     _drawJunctions(ctx, cityGraph, simState) {
@@ -379,6 +447,15 @@ export class Renderer {
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(label, bx, by + 0.5);
+            }
+
+            if (junction.metadata && junction.metadata.label) {
+                ctx.fillStyle = 'rgba(200, 220, 255, 0.8)';
+                const labelSize = Math.max(9, 10 / this.camera.zoom);
+                ctx.font = `${labelSize}px Inter, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillText(junction.metadata.label, junction.x, junction.y + radius + 6);
             }
 
             if (simState.spawn && simState.spawn.enabled) {
@@ -510,11 +587,9 @@ export class Renderer {
             const isGreenWave = hint.reason === 'Green wave';
             const isSlowZone = hint.reason === 'Spillback slow zone';
             if (!isGreenWave && !isSlowZone) continue;
-
-            const p0 = lane.geom.getPoint(0.08);
-            const p1 = lane.geom.getPoint(0.92);
-            const mid = lane.geom.getPoint(0.56);
-            const tangent = lane.geom.getTangent(0.56);
+            const geom = lane.geom;
+            const mid = geom.getPoint(0.56);
+            const tangent = geom.getTangent(0.56);
             const color = isGreenWave ? 'rgba(34, 197, 94, 0.72)' : 'rgba(245, 158, 11, 0.82)';
 
             ctx.save();
@@ -523,8 +598,13 @@ export class Renderer {
             ctx.setLineDash(isGreenWave ? [12, 10] : [4, 7]);
             ctx.lineDashOffset = -this._animTime * (isGreenWave ? 26 : 12);
             ctx.beginPath();
-            ctx.moveTo(p0.x, p0.y);
-            ctx.lineTo(p1.x, p1.y);
+            const steps = geom.points ? Math.max(16, geom.points.length * 6) : 16;
+            for (let i = 0; i <= steps; i++) {
+                const t = 0.08 + (0.84 * (i / steps));
+                const pt = geom.getPoint(t);
+                if (i === 0) ctx.moveTo(pt.x, pt.y);
+                else ctx.lineTo(pt.x, pt.y);
+            }
             ctx.stroke();
             ctx.setLineDash([]);
 
@@ -558,6 +638,44 @@ export class Renderer {
             ctx.arc(junction.x, junction.y, Math.max(24, junction.connections.length * 8), 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
+            ctx.restore();
+        }
+    }
+
+    _drawCurveHandles(ctx, cityGraph, editorState) {
+        const showHandles = editorState.activeTool === 'CURVE';
+        if (!showHandles) return;
+
+        for (const road of cityGraph.roads.values()) {
+            if (!road.controlPoints || road.controlPoints.length === 0) continue;
+
+            ctx.save();
+            ctx.strokeStyle = 'rgba(96, 165, 250, 0.35)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 6]);
+            ctx.beginPath();
+
+            const fromJ = cityGraph.getJunction(road.from);
+            if (fromJ) ctx.moveTo(fromJ.x, fromJ.y);
+
+            for (const cp of road.controlPoints) {
+                ctx.lineTo(cp.x, cp.y);
+            }
+
+            const toJ = cityGraph.getJunction(road.to);
+            if (toJ) ctx.lineTo(toJ.x, toJ.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            for (const cp of road.controlPoints) {
+                ctx.fillStyle = 'rgba(96, 165, 250, 0.9)';
+                ctx.strokeStyle = '#dbeafe';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(cp.x, cp.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }
             ctx.restore();
         }
     }
@@ -782,6 +900,14 @@ export class Renderer {
             ctx.beginPath();
             ctx.moveTo(gp.fromJunction.x, gp.fromJunction.y);
             ctx.lineTo(gp.x, gp.y);
+            ctx.stroke();
+        } else if (gp.type === 'curve') {
+            ctx.fillStyle = 'rgba(96, 165, 250, 0.6)';
+            ctx.strokeStyle = '#93c5fd';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(gp.x, gp.y, 6, 0, Math.PI * 2);
+            ctx.fill();
             ctx.stroke();
         } else if (gp.type === 'facility') {
             const label = gp.facility === 'hospital' ? 'H' : 'F';

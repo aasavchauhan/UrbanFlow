@@ -15,6 +15,7 @@ export class PresetLayouts {
             case 'grid': return PresetLayouts.gridCity();
             case 'ring': return PresetLayouts.ringCity();
             case 'highway': return PresetLayouts.highwayTown();
+            case 'vadodara': return PresetLayouts.vadodaraCity();
             default: return PresetLayouts.gridCity();
         }
     }
@@ -351,6 +352,157 @@ export class PresetLayouts {
                 blocked: false, blockReason: null, vehicles: [], metadata: {},
             });
         }
+
+        return { junctions, roads };
+    }
+
+    /**
+     * Vadodara-inspired layout (schematic, medium size).
+     * Landmarks: Sayajigunj, Alkapuri, Fatehgunj, Gotri, Manjalpur, Waghodiya Chowkdi,
+     * plus a Ring Road and Highway corridor.
+     */
+    static vadodaraCity() {
+        const junctions = [];
+        const roads = [];
+        let jId = 1;
+        let rId = 1;
+
+        const addJ = (x, y, type, label) => {
+            const id = `j${jId++}`;
+            junctions.push({
+                id,
+                x, y,
+                type,
+                connections: [],
+                signalState: null,
+                signalPhases: null,
+                metadata: { label }
+            });
+            return id;
+        };
+
+        const addR = (from, to, type = RoadType.NORMAL, lanes = 2, speed = 50, bidirectional = true, controlPoint = null) => {
+            const fromJ = junctions.find(j => j.id === from);
+            const toJ = junctions.find(j => j.id === to);
+            if (!fromJ || !toJ) return;
+            const dx = toJ.x - fromJ.x;
+            const dy = toJ.y - fromJ.y;
+            roads.push({
+                id: `r${rId++}`,
+                from,
+                to,
+                type,
+                lanes,
+                speedLimit: speed,
+                length: Math.sqrt(dx * dx + dy * dy),
+                bidirectional,
+                blocked: false,
+                blockReason: null,
+                vehicles: [],
+                metadata: {},
+                controlPoint
+            });
+        };
+
+        const curveOutward = (fromId, toId, center, offset) => {
+            const fromJ = junctions.find(j => j.id === fromId);
+            const toJ = junctions.find(j => j.id === toId);
+            if (!fromJ || !toJ) return null;
+            const mx = (fromJ.x + toJ.x) / 2;
+            const my = (fromJ.y + toJ.y) / 2;
+            const vx = mx - center.x;
+            const vy = my - center.y;
+            const mag = Math.sqrt(vx * vx + vy * vy) || 1;
+            return { x: mx + (vx / mag) * offset, y: my + (vy / mag) * offset };
+        };
+
+        // Core nodes (approximate positions, wider layout)
+        const sayajigunj = addJ(0, -80, JunctionType.INTERSECTION, 'Sayajigunj');
+        const alkapuri = addJ(180, -20, JunctionType.INTERSECTION, 'Alkapuri');
+        const fatehgunj = addJ(-80, -200, JunctionType.INTERSECTION, 'Fatehgunj');
+        const gotri = addJ(320, -80, JunctionType.INTERSECTION, 'Gotri');
+        const manjalpur = addJ(200, 180, JunctionType.INTERSECTION, 'Manjalpur');
+        const vrundavan = addJ(60, 260, JunctionType.INTERSECTION, 'Vrundavan');
+        const waghodiya = addJ(420, 80, JunctionType.INTERSECTION, 'Waghodiya Chowkdi');
+        const vipRoad = addJ(260, -200, JunctionType.INTERSECTION, 'VIP Road');
+
+        // Ring road junctions (wider rectangle)
+        const ringN = addJ(80, -320, JunctionType.ENTRY_EXIT, 'Ring-N');
+        const ringNE = addJ(360, -280, JunctionType.ENTRY_EXIT, 'Ring-NE');
+        const ringE = addJ(500, 0, JunctionType.ENTRY_EXIT, 'Ring-E');
+        const ringSE = addJ(360, 300, JunctionType.ENTRY_EXIT, 'Ring-SE');
+        const ringS = addJ(80, 360, JunctionType.ENTRY_EXIT, 'Ring-S');
+        const ringSW = addJ(-240, 300, JunctionType.ENTRY_EXIT, 'Ring-SW');
+        const ringW = addJ(-320, 0, JunctionType.ENTRY_EXIT, 'Ring-W');
+        const ringNW = addJ(-240, -280, JunctionType.ENTRY_EXIT, 'Ring-NW');
+
+        // Highway corridor (diagonal)
+        const hwyNW = addJ(-420, -160, JunctionType.ENTRY_EXIT, 'NH-48 NW');
+        const hwyMid = addJ(-300, -60, JunctionType.INTERSECTION, 'NH-48 Mid');
+        const hwySE = addJ(-180, 40, JunctionType.ENTRY_EXIT, 'NH-48 SE');
+
+        // Central grid connectors
+        const coreN = addJ(80, -140, JunctionType.INTERSECTION, 'Core-N');
+        const coreNW = addJ(-40, -140, JunctionType.INTERSECTION, 'Core-NW');
+        const coreW = addJ(-80, -20, JunctionType.INTERSECTION, 'Core-W');
+        const coreC = addJ(60, 40, JunctionType.INTERSECTION, 'Core-C');
+        const coreE = addJ(200, 40, JunctionType.INTERSECTION, 'Core-E');
+        const coreSE = addJ(200, 140, JunctionType.INTERSECTION, 'Core-SE');
+        const coreS = addJ(60, 160, JunctionType.INTERSECTION, 'Core-S');
+
+        // Ring road loop
+        const ringRoadType = RoadType.HIGHWAY;
+        const ringCenter = { x: 40, y: -20 };
+        addR(ringN, ringNE, ringRoadType, 3, 80, true, curveOutward(ringN, ringNE, ringCenter, 120));
+        addR(ringNE, ringE, ringRoadType, 3, 80, true, curveOutward(ringNE, ringE, ringCenter, 120));
+        addR(ringE, ringSE, ringRoadType, 3, 80, true, curveOutward(ringE, ringSE, ringCenter, 120));
+        addR(ringSE, ringS, ringRoadType, 3, 80, true, curveOutward(ringSE, ringS, ringCenter, 120));
+        addR(ringS, ringSW, ringRoadType, 3, 80, true, curveOutward(ringS, ringSW, ringCenter, 120));
+        addR(ringSW, ringW, ringRoadType, 3, 80, true, curveOutward(ringSW, ringW, ringCenter, 120));
+        addR(ringW, ringNW, ringRoadType, 3, 80, true, curveOutward(ringW, ringNW, ringCenter, 120));
+        addR(ringNW, ringN, ringRoadType, 3, 80, true, curveOutward(ringNW, ringN, ringCenter, 120));
+
+        // Core arterial roads
+        addR(fatehgunj, sayajigunj, RoadType.NORMAL, 2, 50);
+        addR(sayajigunj, alkapuri, RoadType.NORMAL, 2, 50);
+        addR(alkapuri, gotri, RoadType.NORMAL, 2, 50);
+        addR(alkapuri, manjalpur, RoadType.NORMAL, 2, 45);
+        addR(manjalpur, vrundavan, RoadType.RESIDENTIAL, 2, 35);
+        addR(gotri, waghodiya, RoadType.NORMAL, 2, 55);
+        addR(fatehgunj, vipRoad, RoadType.NORMAL, 2, 55);
+        addR(vipRoad, alkapuri, RoadType.NORMAL, 2, 55);
+        addR(vipRoad, gotri, RoadType.NORMAL, 2, 55);
+
+        // Core grid
+        addR(fatehgunj, coreNW, RoadType.NORMAL, 2, 45);
+        addR(coreNW, coreN, RoadType.NORMAL, 2, 45);
+        addR(coreN, sayajigunj, RoadType.NORMAL, 2, 45);
+        addR(coreN, alkapuri, RoadType.NORMAL, 2, 45);
+        addR(coreW, sayajigunj, RoadType.NORMAL, 2, 45);
+        addR(coreW, coreC, RoadType.NORMAL, 2, 40);
+        addR(coreC, coreE, RoadType.NORMAL, 2, 40);
+        addR(coreC, coreS, RoadType.NORMAL, 2, 40);
+        addR(coreE, gotri, RoadType.NORMAL, 2, 45);
+        addR(coreSE, manjalpur, RoadType.NORMAL, 2, 40);
+        addR(coreS, coreSE, RoadType.NORMAL, 2, 40);
+        addR(coreS, vrundavan, RoadType.RESIDENTIAL, 2, 35);
+
+        // Ring connectors
+        addR(ringNW, fatehgunj, RoadType.NORMAL, 2, 55);
+        addR(ringN, sayajigunj, RoadType.NORMAL, 2, 55);
+        addR(ringNE, gotri, RoadType.NORMAL, 2, 55);
+        addR(ringE, waghodiya, RoadType.NORMAL, 2, 55);
+        addR(ringSE, manjalpur, RoadType.NORMAL, 2, 55);
+        addR(ringS, vrundavan, RoadType.NORMAL, 2, 45);
+        addR(ringSW, coreS, RoadType.NORMAL, 2, 45);
+        addR(ringW, coreW, RoadType.NORMAL, 2, 45);
+        addR(ringNE, vipRoad, RoadType.NORMAL, 2, 55);
+
+        // Highway diagonal
+        addR(hwyNW, hwyMid, RoadType.HIGHWAY, 3, 90);
+        addR(hwyMid, hwySE, RoadType.HIGHWAY, 3, 90);
+        addR(hwyMid, ringW, RoadType.NORMAL, 2, 55);
+        addR(hwySE, coreW, RoadType.NORMAL, 2, 50);
 
         return { junctions, roads };
     }

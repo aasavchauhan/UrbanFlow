@@ -790,6 +790,7 @@ document.addEventListener('keydown', (e) => {
         case 'r': if (state.mode === 'EDITOR') selectTool('ROAD'); break;
         case 'o': if (state.mode === 'EDITOR') selectTool('ROUNDABOUT'); break;
         case 's': if (state.mode === 'EDITOR') selectTool('SIGNAL'); break;
+        case 'c': if (state.mode === 'EDITOR') selectTool('CURVE'); break;
         case 'h': if (state.mode === 'EDITOR') selectTool('HOSPITAL'); break;
         case 'f': if (state.mode === 'EDITOR') selectTool('FIRE_STATION'); break;
         case 'x': if (state.mode === 'EDITOR') selectTool('DELETE'); break;
@@ -829,6 +830,7 @@ document.getElementById('btn-help')?.addEventListener('click', () => {
         `  J — Junction tool\n` +
         `  R — Road tool\n` +
         `  S — Signal tool\n` +
+        `  C — Curve road tool\n` +
         `  H — Hospital tool\n` +
         `  F — Fire station tool\n` +
         `  X — Delete tool\n` +

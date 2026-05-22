@@ -13,6 +13,7 @@ export const Tools = {
     ROAD: 'ROAD',
     ROUNDABOUT: 'ROUNDABOUT',
     SIGNAL: 'SIGNAL',
+    CURVE: 'CURVE',
     HOSPITAL: 'HOSPITAL',
     FIRE_STATION: 'FIRE_STATION',
     DELETE: 'DELETE',
@@ -45,6 +46,9 @@ export class EditorController {
         this._spacePanActive = false;
         this._lastPointerWasDrag = false;
         this._dragThreshold = 4;
+        this._curvingRoad = null;
+        this._curveDirty = false;
+        this._curvingPointIndex = null;
 
         // Hover state
         this.hoveredJunction = null;
@@ -137,6 +141,48 @@ export class EditorController {
 
         if (!this.enabled) return;
 
+        if (this.activeTool === Tools.CURVE) {
+            const road = this._findRoadNear(worldPos.x, worldPos.y, 18);
+            if (!road) return;
+
+            if (!road.controlPoints) road.controlPoints = [];
+            const nearestIndex = this._findNearestControlPoint(road.controlPoints, worldPos, 22);
+
+            if (e.shiftKey) {
+                this._saveUndo();
+                if (nearestIndex !== null) {
+                    road.controlPoints.splice(nearestIndex, 1);
+                } else {
+                    road.controlPoints = [];
+                }
+                road.controlPoint = road.controlPoints[road.controlPoints.length - 1] || null;
+                this.cityGraph.rebuildGeometry();
+                this.eventBus.emit(Events.CITY_CHANGED, { reason: 'road:curve-cleared' });
+                return;
+            }
+
+            this._saveUndo();
+            this._curvingRoad = road;
+            this._curveDirty = true;
+            this._pointerDown.action = 'curve';
+            if (nearestIndex !== null) {
+                this._curvingPointIndex = nearestIndex;
+            } else {
+                const insertIndex = this._getCurveInsertIndex(road, worldPos);
+                const cp = { x: worldPos.x, y: worldPos.y };
+                if (insertIndex === null) {
+                    road.controlPoints.push(cp);
+                    this._curvingPointIndex = road.controlPoints.length - 1;
+                } else {
+                    road.controlPoints.splice(insertIndex, 0, cp);
+                    this._curvingPointIndex = insertIndex;
+                }
+            }
+            road.controlPoint = road.controlPoints[road.controlPoints.length - 1] || null;
+            this.cityGraph.rebuildGeometry();
+            return;
+        }
+
         if (this.activeTool === Tools.SELECT) {
             if (this.hoveredJunction) {
                 this._dragCandidateJunction = this.hoveredJunction;
@@ -175,6 +221,18 @@ export class EditorController {
         }
 
         if (!this.enabled) return;
+
+        if (this._curvingRoad) {
+            const points = this._curvingRoad.controlPoints || [];
+            if (this._curvingPointIndex !== null && points[this._curvingPointIndex]) {
+                points[this._curvingPointIndex].x = worldPos.x;
+                points[this._curvingPointIndex].y = worldPos.y;
+            }
+            this._curvingRoad.controlPoints = points;
+            this._curvingRoad.controlPoint = points[points.length - 1] || null;
+            this.cityGraph.rebuildGeometry();
+            return;
+        }
 
         if (this._dragCandidateJunction && pointer?.moved && !this.draggedJunction) {
             this._saveUndo();
@@ -215,6 +273,9 @@ export class EditorController {
                 y: snapped.y,
                 facility: this.activeTool === Tools.HOSPITAL ? FacilityType.HOSPITAL : FacilityType.FIRE_STATION
             };
+        } else if (this.activeTool === Tools.CURVE) {
+            const road = this._findRoadNear(worldPos.x, worldPos.y, 18);
+            this.renderer.ghostPreview = road ? { type: 'curve', x: worldPos.x, y: worldPos.y } : null;
         } else if (this.activeTool === Tools.ROAD && this._roadStartJunction) {
             // Magnetic snap to hovered junction if it exists
             const targetX = this.hoveredJunction ? this.hoveredJunction.x : worldPos.x;
@@ -250,6 +311,15 @@ export class EditorController {
             this._runToolAction(pointer.worldPos);
         }
 
+        if (this._curvingRoad) {
+            if (this._curveDirty) {
+                this.eventBus.emit(Events.CITY_CHANGED, { reason: 'road:curved' });
+            }
+            this._curvingRoad = null;
+            this._curveDirty = false;
+            this._curvingPointIndex = null;
+        }
+
         this._pointerDown = null;
         this._dragCandidateJunction = null;
         this._updateCursor();
@@ -282,6 +352,9 @@ export class EditorController {
 
             case Tools.FIRE_STATION:
                 this._placeFacility(worldPos, FacilityType.FIRE_STATION);
+                break;
+
+            case Tools.CURVE:
                 break;
 
             case Tools.DELETE:
@@ -339,6 +412,7 @@ export class EditorController {
             case Tools.ROUNDABOUT:
             case Tools.HOSPITAL:
             case Tools.FIRE_STATION:
+            case Tools.CURVE:
                 this.canvas.style.cursor = 'crosshair';
                 break;
             case Tools.DELETE:
@@ -542,11 +616,10 @@ export class EditorController {
         let nearestDist = threshold;
 
         for (const road of this.cityGraph.roads.values()) {
-            const fromJ = this.cityGraph.getJunction(road.from);
-            const toJ = this.cityGraph.getJunction(road.to);
-            if (!fromJ || !toJ) continue;
+            const geom = road.geom;
+            if (!geom) continue;
 
-            const pt = this._getClosestPointOnSegment(x, y, fromJ.x, fromJ.y, toJ.x, toJ.y);
+            const pt = this._getClosestPointOnGeom(geom, x, y);
             const dist = Math.sqrt((x - pt.x) ** 2 + (y - pt.y) ** 2);
             if (dist < nearestDist) {
                 nearestDist = dist;
@@ -554,6 +627,71 @@ export class EditorController {
             }
         }
         return nearest;
+    }
+
+    _getClosestPointOnGeom(geom, x, y) {
+        let closest = geom.getPoint(0);
+        let bestDist = Infinity;
+        const steps = geom.points ? Math.max(12, geom.points.length * 6) : 30;
+
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const pt = geom.getPoint(t);
+            const dx = x - pt.x;
+            const dy = y - pt.y;
+            const dist = dx * dx + dy * dy;
+            if (dist < bestDist) {
+                bestDist = dist;
+                closest = pt;
+            }
+        }
+        return { x: closest.x, y: closest.y };
+    }
+
+    _getCurveInsertIndex(road, worldPos) {
+        const fromJ = this.cityGraph.getJunction(road.from);
+        const toJ = this.cityGraph.getJunction(road.to);
+        if (!fromJ || !toJ) return null;
+
+        const points = [
+            { x: fromJ.x, y: fromJ.y },
+            ...(road.controlPoints || []),
+            { x: toJ.x, y: toJ.y }
+        ];
+
+        let bestIdx = null;
+        let bestDist = Infinity;
+
+        for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i];
+            const b = points[i + 1];
+            const closest = this._getClosestPointOnSegment(worldPos.x, worldPos.y, a.x, a.y, b.x, b.y);
+            const dx = worldPos.x - closest.x;
+            const dy = worldPos.y - closest.y;
+            const dist = dx * dx + dy * dy;
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = i;
+            }
+        }
+
+        if (bestIdx === null) return null;
+        return Math.max(0, Math.min(bestIdx, (road.controlPoints || []).length));
+    }
+
+    _findNearestControlPoint(points, worldPos, radius) {
+        let bestIdx = null;
+        let bestDist = radius * radius;
+        for (let i = 0; i < points.length; i++) {
+            const dx = points[i].x - worldPos.x;
+            const dy = points[i].y - worldPos.y;
+            const dist = dx * dx + dy * dy;
+            if (dist <= bestDist) {
+                bestDist = dist;
+                bestIdx = i;
+            }
+        }
+        return bestIdx;
     }
 
     _getClosestPointOnSegment(px, py, ax, ay, bx, by) {

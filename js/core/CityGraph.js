@@ -3,7 +3,7 @@
  * Includes macro (Junction/Road) and micro (Lane/Spline) graphs.
  */
 import { Events } from './EventBus.js';
-import { Vector2, LineSegment, BezierCurve } from './Geometry.js';
+import { Vector2, LineSegment, BezierCurve, PolylineCurve } from './Geometry.js';
 
 export const JunctionType = {
     INTERSECTION: 'intersection',
@@ -100,6 +100,9 @@ export class CityGraph {
             length,
             bidirectional: config.bidirectional !== false,
             blocked: false,
+            controlPoint: config.controlPoint || null,
+            controlPoints: config.controlPoints ? [...config.controlPoints] : null,
+            geom: null,
             laneObjects: [], // Micro-level lane data
         };
 
@@ -179,13 +182,34 @@ export class CityGraph {
             const startNodeRadius = Math.max(12, fromJ.connections.length * 6);
             const endNodeRadius = Math.max(12, toJ.connections.length * 6);
             
-            const dir = new Vector2(toJ.x - fromJ.x, toJ.y - fromJ.y).normalize();
-            // Left-hand drive: use the left normal for offsets
-            const offsetDir = new Vector2(dir.y, -dir.x); 
-            
-            // Adjust road start/end so they don't clip into junction center
-            const pStart = new Vector2(fromJ.x, fromJ.y).add(dir.mult(startNodeRadius));
-            const pEnd = new Vector2(toJ.x, toJ.y).sub(dir.mult(endNodeRadius));
+            const baseStart = new Vector2(fromJ.x, fromJ.y);
+            const baseEnd = new Vector2(toJ.x, toJ.y);
+            const roadControlPoints = road.controlPoints && road.controlPoints.length > 0
+                ? road.controlPoints.map(p => new Vector2(p.x, p.y))
+                : (road.controlPoint ? [new Vector2(road.controlPoint.x, road.controlPoint.y)] : []);
+
+            let roadGeom;
+            if (roadControlPoints.length > 0) {
+                const rawPoints = [baseStart, ...roadControlPoints, baseEnd];
+                const rawGeom = new PolylineCurve(rawPoints);
+                const tanStart = rawGeom.getTangent(0);
+                const tanEnd = rawGeom.getTangent(1);
+                const adjustedStart = baseStart.add(tanStart.mult(startNodeRadius));
+                const adjustedEnd = baseEnd.sub(tanEnd.mult(endNodeRadius));
+                const adjustedPoints = [adjustedStart, ...roadControlPoints, adjustedEnd];
+                const smoothPoints = this._smoothPolyline(adjustedPoints, 22);
+                roadGeom = new PolylineCurve(smoothPoints);
+            } else {
+                const dir = baseEnd.sub(baseStart).normalize();
+                const pStart = baseStart.add(dir.mult(startNodeRadius));
+                const pEnd = baseEnd.sub(dir.mult(endNodeRadius));
+                roadGeom = new LineSegment(pStart, pEnd);
+            }
+
+            road.geom = roadGeom;
+            road.length = roadGeom.length;
+
+            const offsetDir = this._getLeftNormal(roadGeom.getTangent(0));
             
             // Determine forward and backward lanes
             let fwdCount = road.bidirectional ? Math.floor(road.lanes / 2) : road.lanes;
@@ -199,9 +223,7 @@ export class CityGraph {
                 if (!road.bidirectional) {
                     offset = (i - fwdCount / 2 + 0.5) * LANE_WIDTH;
                 }
-                const lStart = pStart.add(offsetDir.mult(offset));
-                const lEnd = pEnd.add(offsetDir.mult(offset));
-                const geom = new LineSegment(lStart, lEnd);
+                const geom = this._offsetRoadGeom(roadGeom, offset, false);
                 
                 const laneId = `l_${_nextLaneId++}`;
                 const lane = {
@@ -217,9 +239,7 @@ export class CityGraph {
             for (let i = 0; i < bwdCount; i++) {
                 // Offset opposite side, traveling in reverse
                 let offset = (i + 0.5) * LANE_WIDTH;
-                const lStart = pEnd.sub(offsetDir.mult(offset));
-                const lEnd = pStart.sub(offsetDir.mult(offset));
-                const geom = new LineSegment(lStart, lEnd);
+                const geom = this._offsetRoadGeom(roadGeom, -offset, true);
                 
                 const laneId = `l_${_nextLaneId++}`;
                 const lane = {
@@ -250,8 +270,8 @@ export class CityGraph {
                 for (const outLane of outgoing) {
                     if (inLane.roadId === outLane.roadId && j.connections.length > 1) continue; // No U-turn
                     
-                    const p0 = inLane.geom.p1; // End of incoming
-                    const p2 = outLane.geom.p0; // Start of outgoing
+                    const p0 = inLane.geom.getPoint(1); // End of incoming
+                    const p2 = outLane.geom.getPoint(0); // Start of outgoing
                     
                     // Control point: Center of junction
                     const p1 = new Vector2(j.x, j.y);
@@ -419,7 +439,9 @@ export class CityGraph {
                 facility: j.facility || null,
             })),
             roads: Array.from(this.roads.values()).map(r => ({
-                id: r.id, from: r.from, to: r.to, type: r.type, lanes: r.lanes, speedLimit: r.speedLimit, bidirectional: r.bidirectional
+                id: r.id, from: r.from, to: r.to, type: r.type, lanes: r.lanes, speedLimit: r.speedLimit, bidirectional: r.bidirectional,
+                controlPoint: r.controlPoint || null,
+                controlPoints: r.controlPoints ? [...r.controlPoints] : null
             })),
             nextJunctionId: _nextJunctionId,
             nextRoadId: _nextRoadId
@@ -452,7 +474,17 @@ export class CityGraph {
             let maxRid = 0;
             if (data.roads) {
                 for (const r of data.roads) {
-                    this.roads.set(r.id, { ...r, blocked: false, laneObjects: [] });
+                    const points = r.controlPoints
+                        ? r.controlPoints
+                        : (r.controlPoint ? [r.controlPoint] : null);
+                    this.roads.set(r.id, {
+                        ...r,
+                        blocked: false,
+                        laneObjects: [],
+                        controlPoint: r.controlPoint || null,
+                        controlPoints: points,
+                        geom: null
+                    });
                     const fromJ = this.junctions.get(r.from);
                     const toJ = this.junctions.get(r.to);
                     if (fromJ) fromJ.connections.push(r.id);
@@ -508,5 +540,99 @@ export class CityGraph {
             lanes: this.lanes.size,
             signalizedJunctions: this.getSignalizedJunctions().length,
         };
+    }
+
+    _getLeftNormal(tangent) {
+        return new Vector2(tangent.y, -tangent.x).normalize();
+    }
+
+    _offsetRoadGeom(roadGeom, offset, reverse = false) {
+        const isBezier = roadGeom.p2 !== undefined;
+        const isPolyline = roadGeom.points !== undefined;
+        if (!isBezier && !isPolyline) {
+            const tangent = roadGeom.getTangent(0);
+            const normal = this._getLeftNormal(tangent).mult(offset);
+            const p0 = roadGeom.p0.add(normal);
+            const p1 = roadGeom.p1.add(normal);
+            return reverse ? new LineSegment(p1, p0) : new LineSegment(p0, p1);
+        }
+
+        if (isPolyline) {
+            const samples = [];
+            const steps = Math.max(20, roadGeom.points.length * 6, Math.floor(roadGeom.length / 12));
+            for (let i = 0; i <= steps; i++) {
+                const t = i / steps;
+                const pt = roadGeom.getPoint(t);
+                const tangent = this._getSmoothTangent(roadGeom, t, steps);
+                const normal = this._getLeftNormal(tangent).mult(offset);
+                samples.push(pt.add(normal));
+            }
+            const smooth = this._smoothPolyline(samples, 10);
+            if (reverse) smooth.reverse();
+            return new PolylineCurve(smooth);
+        }
+
+        const t0 = 0;
+        const t1 = 0.5;
+        const t2 = 1;
+        const p0 = roadGeom.getPoint(t0);
+        const p1 = roadGeom.getPoint(t1);
+        const p2 = roadGeom.getPoint(t2);
+        const n0 = this._getLeftNormal(roadGeom.getTangent(t0));
+        const n1 = this._getLeftNormal(roadGeom.getTangent(t1));
+        const n2 = this._getLeftNormal(roadGeom.getTangent(t2));
+
+        const o0 = p0.add(n0.mult(offset));
+        const o1 = p1.add(n1.mult(offset));
+        const o2 = p2.add(n2.mult(offset));
+
+        if (reverse) {
+            return new BezierCurve(o2, o1, o0);
+        }
+
+        return new BezierCurve(o0, o1, o2);
+    }
+
+    _smoothPolyline(points, stepsPerSegment = 10) {
+        if (!points || points.length < 2) return points || [];
+
+        const out = [];
+        const total = points.length;
+        for (let i = 0; i < total - 1; i++) {
+            const p0 = points[Math.max(0, i - 1)];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[Math.min(total - 1, i + 2)];
+
+            for (let s = 0; s <= stepsPerSegment; s++) {
+                const t = s / stepsPerSegment;
+                const pt = this._catmullRom(p0, p1, p2, p3, t);
+                if (out.length === 0 || (pt.x !== out[out.length - 1].x || pt.y !== out[out.length - 1].y)) {
+                    out.push(pt);
+                }
+            }
+        }
+        return out;
+    }
+
+    _catmullRom(p0, p1, p2, p3, t) {
+        const t2 = t * t;
+        const t3 = t2 * t;
+        const x = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+        const y = 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+        return new Vector2(x, y);
+    }
+
+    _getSmoothTangent(geom, t, steps) {
+        const eps = Math.max(1 / (steps * 2), 0.002);
+        const t0 = Math.max(0, t - eps);
+        const t1 = Math.min(1, t + eps);
+        if (t0 === t1) return geom.getTangent(t);
+        const p0 = geom.getPoint(t0);
+        const p1 = geom.getPoint(t1);
+        const dx = p1.x - p0.x;
+        const dy = p1.y - p0.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        return new Vector2(dx / len, dy / len);
     }
 }
