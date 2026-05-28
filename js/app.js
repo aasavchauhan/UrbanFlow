@@ -34,6 +34,7 @@ const spawnState = {
     vehicleType: VehicleType.CAR,
     originId: null,
     destinationId: null,
+    autoDestination: false,
 };
 
 const benchmarkState = {
@@ -43,6 +44,7 @@ const benchmarkState = {
     duration: 120,
     intervalId: null,
     lastSnapshotAt: 0,
+    previousTraffic: null,
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -227,6 +229,82 @@ function updateStatusBadge(status, text) {
     textEl.textContent = text;
 }
 
+function isAIControllerActive() {
+    return state.aiEnabled || benchmarkState.mode === 'ai' || simController.aiController === aiController;
+}
+
+function setAIEnabled(enabled) {
+    state.aiEnabled = enabled;
+    simController.aiController = enabled ? aiController : fixedController;
+
+    document.querySelectorAll('#toggle-ai').forEach(toggle => {
+        toggle.dataset.active = enabled.toString();
+        toggle.classList.toggle('active', enabled);
+    });
+
+    const pill = document.getElementById('compare-ai-mode-pill');
+    if (pill) {
+        pill.textContent = enabled ? 'AI live' : 'AI ready';
+    }
+
+    eventBus.emit(Events.AI_MODE_CHANGED, { enabled });
+}
+
+function setClickSpawnEnabled(enabled) {
+    spawnState.enabled = enabled;
+    spawnState.originId = null;
+    spawnState.destinationId = null;
+
+    document.querySelectorAll('#toggle-click-spawn, #toggle-compare-click-spawn').forEach(toggle => {
+        toggle.dataset.active = enabled.toString();
+        toggle.classList.toggle('active', enabled);
+    });
+}
+
+function setSpawnType(type) {
+    spawnState.vehicleType = VehicleType[type] || VehicleType.CAR;
+    spawnState.originId = null;
+    spawnState.destinationId = null;
+    spawnState.autoDestination = false;
+
+    document.querySelectorAll('#select-spawn-type, #select-compare-spawn-type').forEach(select => {
+        select.value = spawnState.vehicleType;
+    });
+
+    updateSpawnHints();
+}
+
+function ensureSimulationRunningWithAI() {
+    stopBenchmark(false);
+    if (state.mode !== 'SIMULATION') {
+        setMode('SIMULATION');
+    }
+    setAIEnabled(true);
+    simController.aiController = aiController;
+    if (!simController.running) {
+        simController.start();
+    }
+    updateStatusBadge('running', 'AI Live Test');
+}
+
+function armEmergencyClickSpawn(type) {
+    ensureSimulationRunningWithAI();
+    setSpawnType(type);
+    spawnState.autoDestination = false;
+    setClickSpawnEnabled(true);
+    updateSpawnHints();
+}
+
+function updateSpawnHints() {
+    const isEmergency = spawnState.vehicleType === VehicleType.AMBULANCE || spawnState.vehicleType === VehicleType.FIRE_TRUCK;
+    const text = isEmergency
+        ? `Select origin junction, then destination junction for the ${spawnState.vehicleType === VehicleType.AMBULANCE ? 'ambulance' : 'fire truck'}. AI will clear that route.`
+        : 'Click an origin junction, then a destination junction.';
+
+    const compareHint = document.getElementById('compare-spawn-hint');
+    if (compareHint) compareHint.textContent = text;
+}
+
 // ═══════════════════════════════════════════════════════════
 // Main Render Loop
 // ═══════════════════════════════════════════════════════════
@@ -250,7 +328,7 @@ function mainLoop(timestamp) {
     renderer.heatmapData = heatmap.getData();
 
     // Build render state
-    const aiState = state.aiEnabled && typeof aiController.getState === 'function'
+    const aiState = isAIControllerActive() && typeof aiController.getState === 'function'
         ? aiController.getState()
         : null;
     updateAIStatus(aiState);
@@ -298,11 +376,14 @@ function updateAIStatus(aiState) {
     const activeStrategies = Object.values(aiState.signalStrategies || {})
         .filter(s => s.bestScore > 0)
         .sort((a, b) => b.bestScore - a.bestScore);
+    const activeEmergency = (aiState.activeEmergencies || [])[0];
 
     modeEl.textContent = aiState.mode || 'Adaptive';
     greenEl.textContent = greenWaves;
     slowEl.textContent = slowZones;
-    decisionEl.textContent = activeStrategies.length > 0
+    decisionEl.textContent = activeEmergency
+        ? `${activeEmergency.vehicleType} priority: green corridor at ${activeEmergency.junctionId}`
+        : activeStrategies.length > 0
         ? `${activeStrategies[0].reason}: priority score ${activeStrategies[0].bestScore}`
         : 'Scanning queues, platoons, and downstream capacity.';
 }
@@ -421,7 +502,12 @@ document.getElementById('btn-speed-down')?.addEventListener('click', () => {
 
 // ─── Settings Sliders ──────────────────────────────────────
 document.getElementById('slider-density')?.addEventListener('input', (e) => {
-    document.getElementById('val-density').textContent = e.target.value + '%';
+    const density = parseInt(e.target.value);
+    document.getElementById('val-density').textContent = density + '%';
+    vehicleManager.maxActiveVehicles = Math.round(20 + density * 1.6);
+    vehicleManager.autoSpawnRate = Math.max(0.5, Math.round((density / 25) * 10) / 10);
+    document.getElementById('slider-spawn-rate').value = Math.max(1, Math.round(vehicleManager.autoSpawnRate));
+    document.getElementById('val-spawn-rate').textContent = vehicleManager.autoSpawnRate + '/s';
 });
 
 const sliderGreen = document.getElementById('slider-green-time');
@@ -462,30 +548,30 @@ document.getElementById('slider-spawn-rate')?.addEventListener('input', (e) => {
 document.getElementById('toggle-click-spawn')?.addEventListener('click', (e) => {
     const toggle = e.currentTarget;
     const isActive = toggle.dataset.active === 'true';
-    toggle.dataset.active = (!isActive).toString();
-    toggle.classList.toggle('active', !isActive);
-    spawnState.enabled = !isActive;
-    spawnState.originId = null;
-    spawnState.destinationId = null;
+    setClickSpawnEnabled(!isActive);
+});
+
+document.getElementById('toggle-compare-click-spawn')?.addEventListener('click', (e) => {
+    const toggle = e.currentTarget;
+    const isActive = toggle.dataset.active === 'true';
+    ensureSimulationRunningWithAI();
+    setClickSpawnEnabled(!isActive);
 });
 
 document.getElementById('select-spawn-type')?.addEventListener('change', (e) => {
-    const type = e.target.value;
-    spawnState.vehicleType = VehicleType[type] || VehicleType.CAR;
-    spawnState.originId = null;
-    spawnState.destinationId = null;
+    setSpawnType(e.target.value);
+});
+
+document.getElementById('select-compare-spawn-type')?.addEventListener('change', (e) => {
+    ensureSimulationRunningWithAI();
+    setSpawnType(e.target.value);
 });
 
 // ─── Toggles ───────────────────────────────────────────────
 document.getElementById('toggle-ai')?.addEventListener('click', (e) => {
     const toggle = e.currentTarget;
     const isActive = toggle.dataset.active === 'true';
-    toggle.dataset.active = !isActive;
-    toggle.classList.toggle('active', !isActive);
-
-    state.aiEnabled = !isActive;
-    simController.aiController = state.aiEnabled ? aiController : fixedController;
-    eventBus.emit(Events.AI_MODE_CHANGED, { enabled: state.aiEnabled });
+    setAIEnabled(!isActive);
 });
 
 document.getElementById('toggle-heatmap')?.addEventListener('click', (e) => {
@@ -659,6 +745,33 @@ document.getElementById('btn-close-signal-config')?.addEventListener('click', ()
 });
 
 // ─── Comparison Benchmark ──────────────────────────────────
+// Compare AI Live Spawning
+document.getElementById('btn-compare-live-ai')?.addEventListener('click', () => {
+    ensureSimulationRunningWithAI();
+});
+
+document.getElementById('btn-compare-spawn-10')?.addEventListener('click', () => {
+    ensureSimulationRunningWithAI();
+    vehicleManager.spawnRandom(10, VehicleType.CAR);
+});
+
+document.getElementById('btn-compare-spawn-bus')?.addEventListener('click', () => {
+    ensureSimulationRunningWithAI();
+    vehicleManager.spawnRandom(1, VehicleType.BUS);
+});
+
+document.getElementById('btn-compare-spawn-ambulance')?.addEventListener('click', () => {
+    armEmergencyClickSpawn(VehicleType.AMBULANCE);
+});
+
+document.getElementById('btn-compare-spawn-fire')?.addEventListener('click', () => {
+    armEmergencyClickSpawn(VehicleType.FIRE_TRUCK);
+});
+
+document.getElementById('btn-compare-clear')?.addEventListener('click', () => {
+    vehicleManager.clearAll();
+});
+
 document.getElementById('btn-run-fixed')?.addEventListener('click', async () => {
     await startBenchmark('fixed');
 });
@@ -716,14 +829,24 @@ async function startBenchmark(mode) {
 
     benchmarkState.active = true;
     benchmarkState.mode = mode;
+    benchmarkState.previousTraffic = {
+        autoSpawnRate: vehicleManager.autoSpawnRate,
+        maxActiveVehicles: vehicleManager.maxActiveVehicles,
+    };
 
+    setAIEnabled(mode === 'ai');
     simController.aiController = mode === 'ai' ? aiController : fixedController;
     simController.reset();
     metricsCollector.reset();
     simController.start();
-    simController.setSpeed(5);
+    simController.setSpeed(1);
+    vehicleManager.autoSpawnRate = 0.9;
+    vehicleManager.maxActiveVehicles = 42;
+    vehicleManager.spawnRandom(10, VehicleType.CAR);
+    document.getElementById('speed-display').textContent = '1×';
     document.getElementById('speed-display').textContent = '5×';
 
+    document.getElementById('speed-display').textContent = '1×';
     updateStatusBadge('running', mode === 'ai' ? 'Running AI...' : 'Running Fixed...');
 
     if (benchmarkState.continuous) {
@@ -764,6 +887,11 @@ function stopBenchmark(pauseSim = true) {
     simController.setSpeed(1);
     document.getElementById('speed-display').textContent = '1×';
     simController.aiController = state.aiEnabled ? aiController : fixedController;
+    if (benchmarkState.previousTraffic) {
+        vehicleManager.autoSpawnRate = benchmarkState.previousTraffic.autoSpawnRate;
+        vehicleManager.maxActiveVehicles = benchmarkState.previousTraffic.maxActiveVehicles;
+        benchmarkState.previousTraffic = null;
+    }
 }
 
 // ─── Keyboard Shortcuts ────────────────────────────────────

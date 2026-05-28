@@ -13,6 +13,7 @@ const VEHICLE_PROPS = {
 const CAR_COLORS = ['#60a5fa', '#a78bfa', '#34d399', '#f472b6', '#818cf8', '#67e8f9', '#fbbf24'];
 const SIGNAL_STOP_BUFFER = 6;
 const QUEUE_GAP = 6;
+const SPAWN_CLEARANCE = 28;
 
 let _nextVehicleId = 1;
 
@@ -47,7 +48,9 @@ export class Vehicle {
         this.progress = 0; // 0..1 along current geometry
 
         this.state = 'moving';
+        this.waitReason = null;
         this.waitTime = 0;
+        this.deadlockTime = 0;
         this.totalTime = 0;
         this.distanceTraveled = 0;
 
@@ -69,12 +72,31 @@ export class Vehicle {
         }
         
         if (validLanes.length > 0) {
-            // Pick a random valid lane
-            const chosen = validLanes[Math.floor(Math.random() * validLanes.length)];
+            const chosen = this._chooseBestSpawnLane(validLanes);
+            if (!chosen) {
+                this.state = 'blocked-spawn';
+                return;
+            }
             this._transferToGeom(chosen, 'lane');
         } else {
             this.state = 'arrived';
         }
+    }
+
+    _chooseBestSpawnLane(validLanes) {
+        const scored = validLanes.map(lane => {
+            const clearStart = !lane.vehicles.some(v => {
+                const distanceFromStart = v.progress * lane.geom.length;
+                return distanceFromStart < SPAWN_CLEARANCE;
+            });
+            return {
+                lane,
+                clearStart,
+                score: lane.vehicles.length + (clearStart ? 0 : 100),
+            };
+        }).sort((a, b) => a.score - b.score);
+
+        return scored[0]?.clearStart ? scored[0].lane : null;
     }
 
     _transferToGeom(geomObj, type) {
@@ -133,10 +155,11 @@ export class Vehicle {
         
         for (const other of currentObj.vehicles) {
             if (other.id === this.id) continue;
-            if (other.progress > this.progress) {
+            const samePositionAhead = Math.abs(other.progress - this.progress) < 0.0005 && other.id < this.id;
+            if (other.progress > this.progress || samePositionAhead) {
                 const dist = (other.progress - this.progress) * length;
                 if (dist < nearestDist) {
-                    nearestDist = dist;
+                    nearestDist = Math.max(0, dist);
                     vehicleAhead = other;
                 }
             }
@@ -147,6 +170,7 @@ export class Vehicle {
         
         let stoppingForSignal = false;
         let yieldingToTraffic = false;
+        let gridlockRelease = false;
 
         // ─── 1. Follow distance to vehicle ahead ───
         if (vehicleAhead) {
@@ -195,14 +219,18 @@ export class Vehicle {
 
                         if (targetLane) {
                             // Box-block rule: only enter if exit lane has space
-                            const blockBuffer = this.size * 2 + QUEUE_GAP;
+                            const blockBuffer = this.size * 1.4 + QUEUE_GAP;
                             const blocked = targetLane.vehicles.some(v => {
                                 if (v.id === this.id) return false;
                                 return v.progress * targetLane.geom.length < blockBuffer;
                             });
-                            if (blocked) {
+                            const hasWaitedTooLong = this.waitTime > 5 && signalPhase === 'green';
+                            const downstreamIsMoving = targetLane.vehicles.some(v => v.speed > 3 || v.progress > 0.18);
+                            if (blocked && !this.priority && !hasWaitedTooLong && !downstreamIsMoving) {
                                 shouldStop = true;
                                 yieldingToTraffic = true;
+                            } else if (blocked && (this.priority > 0 || hasWaitedTooLong || downstreamIsMoving)) {
+                                gridlockRelease = true;
                             }
                         }
                     }
@@ -298,10 +326,13 @@ export class Vehicle {
                             const dy = otherV.y - this.y;
                             if (dx*dx + dy*dy < (this.size * 2.5) * (this.size * 2.5)) {
                                 const dot = Math.cos(this.angle) * dx + Math.sin(this.angle) * dy;
-                                if (dot > 0) {
+                                if (otherV.priority > this.priority && dot > -this.size) {
                                     targetSpeed = 0;
                                     yieldingToTraffic = true;
-                                } else if (Math.abs(dot) < this.size && this.id > otherV.id) {
+                                } else if (otherV.priority === this.priority && dot > 0) {
+                                    targetSpeed = 0;
+                                    yieldingToTraffic = true;
+                                } else if (otherV.priority === this.priority && Math.abs(dot) < this.size && this.id > otherV.id) {
                                     targetSpeed = 0;
                                     yieldingToTraffic = true;
                                 }
@@ -317,9 +348,15 @@ export class Vehicle {
         if (targetSpeed < 2 && (stoppingForSignal || yieldingToTraffic || (vehicleAhead && nearestDist < MIN_FOLLOW_DIST + 5))) {
             targetSpeed = 0;
             this.state = 'waiting';
+            this.waitReason = stoppingForSignal ? 'signal' : (yieldingToTraffic ? 'yield' : 'follow');
             this.waitTime += dt;
+            if (this.waitReason !== 'signal') {
+                this.deadlockTime += dt;
+            }
         } else {
             this.state = 'moving';
+            this.waitReason = null;
+            this.deadlockTime = 0;
         }
 
         if (this.speed < targetSpeed) {
@@ -332,6 +369,9 @@ export class Vehicle {
             const progressDelta = (this.speed * dt) / length;
             this.progress += progressDelta;
             this.distanceTraveled += this.speed * dt;
+        } else if (gridlockRelease && this.geomType === 'lane') {
+            this.progress += Math.min(0.015, (6 * dt) / length);
+            this.distanceTraveled += 6 * dt;
         }
 
         // ─── Hard clamp: prevent running through a red/yellow signal ───
@@ -343,6 +383,7 @@ export class Vehicle {
                 this.progress = maxProgress;
                 this.speed = 0;
                 this.state = 'waiting';
+                this.waitReason = 'signal';
                 this.waitTime += dt;
             }
         }
@@ -433,7 +474,7 @@ export class Vehicle {
             id: this.id, x: this.x, y: this.y, angle: this.angle,
             type: this.type, color: this.color, visible: this.visible, state: this.state,
             speed: this.speed, progress: this.progress, geomType: this.geomType,
-            currentGeomId: this.currentGeomId,
+            currentGeomId: this.currentGeomId, waitReason: this.waitReason,
         };
     }
 }

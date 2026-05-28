@@ -18,16 +18,17 @@ export class AIController {
         this.eventBus = eventBus;
 
         // AI parameters
-        this.minGreenTime = 8;     // seconds
-        this.maxGreenTime = 55;    // seconds
-        this.evaluationInterval = 2; // seconds between evaluations
+        this.minGreenTime = 4;     // seconds
+        this.maxGreenTime = 12;    // seconds
+        this.evaluationInterval = 0.6; // seconds between evaluations
         this._evalTimer = 0;
         this.weights = {
-            queue: 12,
-            waitTime: 2,
-            approaching: 4,
-            upstreamFlow: 6,
-            downstreamBlock: 28,
+            queue: 18,
+            waitTime: 4,
+            approaching: 7,
+            upstreamFlow: 5,
+            emergency: 500,
+            downstreamBlock: 22,
         };
 
         // Flow tracking for prediction
@@ -40,6 +41,7 @@ export class AIController {
             laneSpeedHints: {},
             signalStrategies: {},
             recentActions: [],
+            activeEmergencies: [],
         };
     }
 
@@ -66,6 +68,7 @@ export class AIController {
      */
     _handleEmergencies(signals, vehicleManager) {
         const currentEmergencies = new Set();
+        const activeEmergencies = [];
 
         for (const vehicle of vehicleManager.vehicles) {
             if (vehicle.priority <= 0) continue; // Not emergency
@@ -75,20 +78,26 @@ export class AIController {
                 const nextJunctionId = vehicle.route[vehicle.routeIndex + 1];
                 const signal = signals.get(nextJunctionId);
 
-                if (signal && vehicle.progress > 0.4) {
+                if (signal && vehicle.geomType === 'lane' && vehicle.progress > 0.12) {
                     const key = `${vehicle.id}-${nextJunctionId}`;
                     currentEmergencies.add(key);
+                    activeEmergencies.push({
+                        vehicleId: vehicle.id,
+                        vehicleType: vehicle.type,
+                        junctionId: nextJunctionId,
+                        laneId: vehicle.currentGeomId,
+                    });
 
                     if (!this._activeEmergencies.has(key)) {
                         // New emergency approaching — preempt signal
-                        if (vehicle.geomType === 'lane') {
-                            signal.preempt(vehicle.currentGeomId);
-                            this.eventBus.emit(Events.SIGNAL_PREEMPTED, {
-                                junctionId: nextJunctionId,
-                                vehicleId: vehicle.id,
-                                vehicleType: vehicle.type,
-                            });
-                        }
+                        signal.preempt(vehicle.currentGeomId);
+                        this._rememberAction(`${nextJunctionId}: emergency green for ${vehicle.type}`);
+                        this.eventBus.emit(Events.SIGNAL_PREEMPTED, {
+                            junctionId: nextJunctionId,
+                            vehicleId: vehicle.id,
+                            vehicleType: vehicle.type,
+                            laneId: vehicle.currentGeomId,
+                        });
                     }
                 }
             }
@@ -106,6 +115,7 @@ export class AIController {
         }
 
         this._activeEmergencies = currentEmergencies;
+        this._decisionState.activeEmergencies = activeEmergencies;
     }
 
     /**
@@ -125,6 +135,7 @@ export class AIController {
             const phaseScores = phaseGroups.map((group, idx) => {
                 let score = 0;
                 let downstreamPressure = 0;
+                let maxWait = 0;
                 for (const laneId of group) {
                     const queueLength = queues[laneId] || 0;
 
@@ -136,22 +147,31 @@ export class AIController {
                     );
                     for (const v of waitingVehicles) {
                         score += v.waitTime * this.weights.waitTime;
+                        maxWait = Math.max(maxWait, v.waitTime);
+                        if (v.priority > 0) {
+                            score += this.weights.emergency;
+                        }
                     }
 
                     const approaching = this._getApproachingVehicles(laneId, vehicleManager);
-                    score += approaching * this.weights.approaching;
+                    score += approaching.count * this.weights.approaching;
+                    score += approaching.emergency * this.weights.emergency;
 
                     const upstreamFlow = this._getUpstreamFlow(laneId);
                     score += upstreamFlow * this.weights.upstreamFlow;
 
                     const downstream = this._getDownstreamPressure(laneId);
                     downstreamPressure = Math.max(downstreamPressure, downstream);
-                    score -= downstream * this.weights.downstreamBlock;
+                    const spillbackPenalty = maxWait > 18
+                        ? this.weights.downstreamBlock * 0.25
+                        : this.weights.downstreamBlock;
+                    score -= downstream * spillbackPenalty;
                 }
                 return {
                     phaseIndex: idx,
                     score: Math.max(0, score),
                     downstreamPressure,
+                    maxWait,
                 };
             });
 
@@ -197,7 +217,6 @@ export class AIController {
                 const totalScore = topPhase.score + secondPhase.score;
                 if (totalScore > 0) {
                     const topRatio = topPhase.score / totalScore;
-                    const cycleDuration = this.minGreenTime * 2 + 10; // Base cycle
                     const newGreenTime = this.minGreenTime + topRatio * (this.maxGreenTime - this.minGreenTime);
                     signal.setGreenDuration(Math.round(newGreenTime));
                 }
@@ -212,8 +231,12 @@ export class AIController {
             if (
                 currentPhaseScore &&
                 bestPhase.phaseIndex !== signal.currentPhaseIndex &&
-                bestPhase.score > currentPhaseScore.score * 3 && // 3x more demand
-                signal.timer > this.minGreenTime // Minimum green time elapsed
+                (
+                    bestPhase.score > currentPhaseScore.score + 10 ||
+                    bestPhase.score > currentPhaseScore.score * 1.7 ||
+                    bestPhase.maxWait > 18
+                ) &&
+                signal.timer > (bestPhase.maxWait > 18 ? 2 : this.minGreenTime)
             ) {
                 signal.forcePhaseSwitch(bestPhase.phaseIndex);
 
@@ -225,6 +248,15 @@ export class AIController {
                     toPhase: bestPhase.phaseIndex,
                 });
                 this._rememberAction(`${junctionId}: ${bestPhase.downstreamPressure > 0.7 ? 'spillback guard' : 'demand switch'}`);
+            } else if (
+                currentPhaseScore &&
+                bestPhase.phaseIndex !== signal.currentPhaseIndex &&
+                currentPhaseScore.score <= 0 &&
+                bestPhase.score > 0 &&
+                signal.timer > 2
+            ) {
+                signal.forcePhaseSwitch(bestPhase.phaseIndex);
+                this._rememberAction(`${junctionId}: skip empty phase`);
             }
         }
 
@@ -249,12 +281,14 @@ export class AIController {
 
     _getApproachingVehicles(laneId, vehicleManager) {
         let count = 0;
+        let emergency = 0;
         for (const vehicle of vehicleManager.vehicles) {
             if (vehicle.currentGeomId === laneId && vehicle.progress > 0.2 && vehicle.state !== 'arrived') {
                 count++;
+                if (vehicle.priority > 0) emergency++;
             }
         }
-        return count;
+        return { count, emergency };
     }
 
     _getDownstreamPressure(laneId) {
@@ -311,6 +345,7 @@ export class AIController {
             laneSpeedHints: { ...this._decisionState.laneSpeedHints },
             signalStrategies: { ...this._decisionState.signalStrategies },
             recentActions: [...this._decisionState.recentActions],
+            activeEmergencies: [...this._decisionState.activeEmergencies],
         };
     }
 }
