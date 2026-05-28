@@ -134,13 +134,18 @@ function updateSavedPresetState() {
 }
 
 function exportCurrentCity() {
+    let name = prompt("Enter a name for this city export:", "My UrbanFlow City");
+    if (name === null) return;
+    name = name.trim() || "UrbanFlow City";
+    const safeName = name.replace(/[^a-z0-9\-_ ]/gi, '').replace(/\s+/g, '-').toLowerCase();
+
     const data = cityGraph.toJSON();
+    data.name = name;
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     link.href = url;
-    link.download = `urbanflow-city-${stamp}.json`;
+    link.download = `${safeName}.json`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -149,6 +154,10 @@ function exportCurrentCity() {
 
 function importCityFile(file) {
     if (!file) return;
+
+    if (!confirm(`Are you sure you want to import "${file.name}"? This will replace your current city.`)) {
+        return;
+    }
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -438,12 +447,17 @@ document.getElementById('btn-zoom-reset')?.addEventListener('click', () => {
 // ─── Preset Layouts ────────────────────────────────────────
 document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
     btn.addEventListener('click', () => {
-        loadPreset(btn.dataset.preset);
+        const presetName = btn.dataset.preset;
+        if (confirm(`Are you sure you want to load the "${presetName}" preset? This will overwrite your current city.`)) {
+            loadPreset(presetName);
+        }
     });
 });
 
 document.getElementById('preset-saved-city')?.addEventListener('click', () => {
-    loadSavedCity();
+    if (confirm("Are you sure you want to load your saved city? This will overwrite your current city.")) {
+        loadSavedCity();
+    }
 });
 
 // ─── Session Management ────────────────────────────────────
@@ -453,7 +467,9 @@ document.getElementById('btn-save-session')?.addEventListener('click', () => {
 });
 
 document.getElementById('btn-load-session')?.addEventListener('click', () => {
-    loadSavedCity();
+    if (confirm("Are you sure you want to load your saved city? This will overwrite your current city.")) {
+        loadSavedCity();
+    }
 });
 
 document.getElementById('btn-export-city')?.addEventListener('click', () => {
