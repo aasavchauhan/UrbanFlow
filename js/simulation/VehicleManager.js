@@ -21,6 +21,7 @@ export class VehicleManager {
         // Auto-spawner
         this.autoSpawnEnabled = false;
         this.autoSpawnRate = 3; // vehicles per second
+        this.maxActiveVehicles = 80;
         this._spawnAccumulator = 0;
 
         // Weather modifier
@@ -38,16 +39,19 @@ export class VehicleManager {
      */
     update(dt, signalStates = {}, aiState = null) {
         // Auto-spawn
-        if (this.autoSpawnEnabled) {
+        if (this.autoSpawnEnabled && this._canAutoSpawn()) {
             this._spawnAccumulator += dt * this.autoSpawnRate;
             while (this._spawnAccumulator >= 1) {
                 this.spawnRandom(1, VehicleType.CAR);
                 this._spawnAccumulator -= 1;
             }
+        } else {
+            this._spawnAccumulator = Math.min(this._spawnAccumulator, 0.5);
         }
 
         // Update all vehicles
         const arrived = [];
+        const stale = [];
         for (const vehicle of this.vehicles) {
             // Apply weather speed modifier
             const originalMax = vehicle.maxSpeed;
@@ -66,11 +70,13 @@ export class VehicleManager {
 
             if (vehicle.state === 'arrived') {
                 arrived.push(vehicle);
+            } else if (this._isGridlocked(vehicle)) {
+                stale.push(vehicle);
             }
         }
 
         // Remove arrived vehicles
-        for (const vehicle of arrived) {
+        for (const vehicle of [...arrived, ...stale]) {
             this._removeVehicle(vehicle);
         }
     }
@@ -91,6 +97,10 @@ export class VehicleManager {
             route,
             cityGraph: this.cityGraph,
         });
+
+        if (vehicle.state === 'blocked-spawn' || vehicle.state === 'arrived') {
+            return null;
+        }
 
         this.vehicles.push(vehicle);
         this.totalSpawned++;
@@ -135,7 +145,7 @@ export class VehicleManager {
         let spawned = 0;
         let attempts = 0;
 
-        while (spawned < count && attempts < count * 3) {
+        while (spawned < count && attempts < count * 8) {
             attempts++;
             const origin = pickWeighted();
             let dest = pickWeighted();
@@ -151,7 +161,7 @@ export class VehicleManager {
     /**
      * Spawn an emergency vehicle.
      */
-    spawnEmergency(type) {
+    spawnEmergency(type, originId = null, destId = null) {
         if (type !== VehicleType.AMBULANCE && type !== VehicleType.FIRE_TRUCK) {
             type = VehicleType.AMBULANCE;
         }
@@ -159,16 +169,27 @@ export class VehicleManager {
         const facilities = this.cityGraph.getFacilities?.(facilityType) || [];
         const entryPoints = this.cityGraph.getEntryExitPoints();
 
+        if (originId && destId && originId !== destId) {
+            return this.spawnVehicle(type, originId, destId);
+        }
+
+        if (originId) {
+            const destinations = facilities.length > 0
+                ? facilities
+                : Array.from(this.cityGraph.junctions.values()).filter(j => j.id !== originId);
+            const dest = this._pickFarthestReachable(originId, destinations);
+            if (dest) return this.spawnVehicle(type, originId, dest.id);
+        }
+
         if (facilities.length > 0 && entryPoints.length > 0) {
             const origin = entryPoints[Math.floor(Math.random() * entryPoints.length)];
             const dest = facilities[Math.floor(Math.random() * facilities.length)];
             if (origin && dest && origin.id !== dest.id) {
-                this.spawnVehicle(type, origin.id, dest.id);
-                return;
+                return this.spawnVehicle(type, origin.id, dest.id);
             }
         }
 
-        this.spawnRandom(1, type);
+        return this.spawnRandom(1, type);
     }
 
     /**
@@ -247,5 +268,59 @@ export class VehicleManager {
                 waitTime: vehicle.waitTime,
             });
         }
+    }
+
+    _canAutoSpawn() {
+        if (this.vehicles.length >= this.maxActiveVehicles) return false;
+        const laneCount = Math.max(1, this.cityGraph.lanes.size);
+        const networkCapacity = laneCount * 3;
+        if (this.vehicles.length >= networkCapacity) return false;
+        if (this.vehicles.length < 8) return true;
+
+        const waiting = this.vehicles.filter(v => v.state === 'waiting').length;
+        const waitingRatio = waiting / this.vehicles.length;
+        return waitingRatio < 0.32;
+    }
+
+    _isGridlocked(vehicle) {
+        if (vehicle.priority > 0) return false;
+        if (vehicle.waitReason === 'signal') {
+            return vehicle.waitTime > 65;
+        }
+        if (vehicle.deadlockTime < 18) return false;
+
+        const geom = vehicle.geomType === 'lane'
+            ? this.cityGraph.lanes.get(vehicle.currentGeomId)
+            : this.cityGraph.connections.get(vehicle.currentGeomId);
+        if (!geom) return true;
+
+        const localPileup = geom.vehicles.filter(v => v.state === 'waiting' && v.waitReason !== 'signal').length;
+        return localPileup >= 2 || vehicle.deadlockTime > 28;
+    }
+
+    _pickFarthestReachable(originId, candidates) {
+        let best = null;
+        let bestDistance = -Infinity;
+        const origin = this.cityGraph.getJunction(originId);
+        if (!origin) return null;
+
+        for (const candidate of candidates) {
+            if (!candidate || candidate.id === originId) continue;
+            const route = this.pathfinder.findPath(originId, candidate.id, {
+                avoidBlocked: true,
+                congestionWeight: 0.2,
+            });
+            if (!route || route.length < 2) continue;
+
+            const dx = candidate.x - origin.x;
+            const dy = candidate.y - origin.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance > bestDistance) {
+                bestDistance = distance;
+                best = candidate;
+            }
+        }
+
+        return best;
     }
 }

@@ -444,6 +444,36 @@
                             <button class="btn btn-sm btn-success" id="btn-run-ai">Run AI</button>
                             <button class="btn btn-sm" id="btn-stop-benchmark">Stop</button>
                         </div>
+                        <div class="compare-spawn-lab">
+                            <div class="compare-spawn-title">
+                                <span>Live AI Traffic Lab</span>
+                                <span id="compare-ai-mode-pill">AI ready</span>
+                            </div>
+                            <p>
+                                Start an AI-controlled live run, then inject cars or emergency vehicles to observe signal preemption, green-wave hints, queues, and emergency delay.
+                            </p>
+                            <div class="btn-group" style="flex-wrap:wrap; margin-bottom:10px;">
+                                <button class="btn btn-sm btn-success" id="btn-compare-live-ai">Start AI Live</button>
+                                <button class="btn btn-sm" id="btn-compare-spawn-10">+10 Cars</button>
+                                <button class="btn btn-sm" id="btn-compare-spawn-bus">+Bus</button>
+                                <button class="btn btn-sm btn-primary" id="btn-compare-spawn-ambulance">Ambulance</button>
+                                <button class="btn btn-sm btn-primary" id="btn-compare-spawn-fire">Fire Truck</button>
+                                <button class="btn btn-sm btn-danger" id="btn-compare-clear">Clear</button>
+                            </div>
+                            <div class="toggle-row" style="margin-bottom:10px;">
+                                <span class="toggle-label">Click Spawn In AI</span>
+                                <div class="toggle-switch spawn-toggle" id="toggle-compare-click-spawn" data-active="false"></div>
+                            </div>
+                            <select class="spawn-type-select" id="select-compare-spawn-type" style="width:100%;">
+                                <option value="CAR" selected>Car</option>
+                                <option value="BUS">Bus</option>
+                                <option value="AMBULANCE">Ambulance</option>
+                                <option value="FIRE_TRUCK">Fire Truck</option>
+                            </select>
+                            <div class="compare-spawn-hint" id="compare-spawn-hint">
+                                Click an origin junction, then a destination junction. Emergency vehicles will request green corridors under AI control.
+                            </div>
+                        </div>
                         <table class="comparison-table">
                             <thead>
                                 <tr>

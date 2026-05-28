@@ -868,6 +868,47 @@ select:focus {
     color: var(--color-danger);
 }
 
+.compare-spawn-lab {
+    margin: 12px 0;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-tertiary);
+}
+
+.compare-spawn-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+    color: var(--color-text-primary);
+}
+
+.compare-spawn-title span:last-child {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(16, 185, 129, 0.14);
+    color: var(--color-success);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+}
+
+.compare-spawn-lab p,
+.compare-spawn-hint {
+    margin: 0 0 10px;
+    color: var(--color-text-tertiary);
+    font-size: var(--font-size-xs);
+    line-height: 1.45;
+}
+
+.compare-spawn-hint {
+    margin: 8px 0 0;
+}
+
 /* ─── Toggle Switch ────────────────────────────────────────── */
 .toggle-row {
     display: flex;
